@@ -20,7 +20,9 @@ services:
       - ./models:/root/.ollama
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
-      OLLAMA_KEEP_ALIVE: 30m
+      # 24h mantiene el modelo en RAM y evita cold-starts a costo de ~1.2 GB
+      # ocupados permanentemente (qwen2.5:1.5b).
+      OLLAMA_KEEP_ALIVE: 24h
 
 networks:
   web:

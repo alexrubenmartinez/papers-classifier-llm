@@ -293,7 +293,8 @@ async def _justify_paper(paper: dict) -> tuple[str, int]:
             {"role": "user", "content": prompt_user},
         ],
     }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(90.0)) as client:
+    # 180s deja margen para cold-start del modelo + eval de la respuesta.
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0)) as client:
         try:
             r = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
         except httpx.RequestError as exc:
