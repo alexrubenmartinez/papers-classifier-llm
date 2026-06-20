@@ -163,6 +163,29 @@ RE_ISSN = re.compile(r"\b(?:e[-\s]?|p[-\s]?)?ISSN\s*[:\-]?\s*\d{4}\-\d{3}[\dXx]\
 #   "Ammar Bajwa ; Aleem Al Razee Tonoy ; Sohel Rana ; Ishtiaque Ahmed"
 RE_AUTHOR_LIST = re.compile(r"\S\s*;\s+\S.+?\S\s*;\s+\S")
 
+# Lista de autores con coma + 'and' (estilo APA):
+#   "Foluke Ekundayo , Iyabode Atoyebi , Adesola Soyele , and Emmanuel Ogunwobi"
+# Cada segmento debe ser "Nombre Apellido" (≥2 palabras capitalizadas) — así no
+# se confunde con títulos enumerativos como "AI, ML, and Cybersecurity".
+RE_AUTHOR_LIST_COMMA = re.compile(
+    r"^(?:[A-Z][\w'\-]+(?:\s+[A-Z][\w'\-.]+)+)"
+    r"(?:\s*,\s*(?:[A-Z][\w'\-]+(?:\s+[A-Z][\w'\-.]+)+)){1,5}"
+    r"\s*,?\s+(?:and|y|&)\s+"
+    r"(?:[A-Z][\w'\-]+(?:\s+[A-Z][\w'\-.]+)+)\s*$"
+)
+
+# Ruido al final del título cuando PyMuPDF mezcla el span del título con el del
+# encabezado siguiente:
+#   "AI integration ... response Abstract"
+#   "Some Paper Title 1. Introduction"
+# Lo recortamos antes de validar.
+RE_TITLE_TRAILING_NOISE = re.compile(
+    r"\s+(?:\d{1,2}\s*[\.\)]?\s*)?"
+    r"(?:Abstract|Introduction|Keywords|Resumen|Palabras\s+clave)"
+    r"\s*[\.\:]?\s*$",
+    re.IGNORECASE,
+)
+
 
 def strip_journal_header(text: str) -> str:
     """Si el texto empieza con un nombre de revista y hay un separador, devuelve
@@ -221,6 +244,9 @@ def looks_like_title(text: str | None) -> bool:
     # Lista de autores con separador ' ; ' (típica de papers).
     if RE_AUTHOR_LIST.search(s):
         return False
+    # Lista de autores con coma + 'and' (estilo APA).
+    if RE_AUTHOR_LIST_COMMA.match(s):
+        return False
     # Solo dígitos / símbolos: no es título
     if not any(c.isalpha() for c in s):
         return False
@@ -268,6 +294,8 @@ def extract_title_from_page(page) -> str | None:
         # `___` o múltiples espacios desaparecen al colapsar).
         title = strip_journal_header(title)
         title = re.sub(r"\s+", " ", title).strip()
+        # Recortar ruido al final ("…response Abstract" → "…response").
+        title = RE_TITLE_TRAILING_NOISE.sub("", title).strip()
         if looks_like_title(title):
             return title[:500]
     return None
