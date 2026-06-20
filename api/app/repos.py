@@ -11,6 +11,31 @@ def _now_iso() -> str:
 
 
 async def next_paper_id() -> str:
+    """Atomic counter sobre `examen_api.counters`. Race-safe entre uploads paralelos:
+    Mongo garantiza que dos `findAndModify` con `$inc` simultaneos devuelven valores
+    distintos. El doc se inicializa en `init_counters()` al startup."""
+    db = get_mongo()
+    counter = await db.counters.find_one_and_update(
+        {"_id": "paper_id"},
+        {"$inc": {"seq": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if counter is None:
+        # Fallback defensivo: si el counter no existe, lo creamos sincronizado con
+        # el max actual y reintentamos. NO deberia pasar si init_counters corrio.
+        max_n = await _max_paper_n()
+        await db.counters.update_one(
+            {"_id": "paper_id"},
+            {"$set": {"seq": max_n + 1}},
+            upsert=True,
+        )
+        return f"PAPER_{max_n + 1}"
+    return f"PAPER_{counter['seq']}"
+
+
+async def _max_paper_n() -> int:
+    """Devuelve el mayor sufijo numerico entre los paper_ids existentes, o 2000
+    si la coleccion esta vacia. Solo uso interno (init_counters / fallback)."""
     db = get_mongo()
     cursor = db.papers.aggregate([
         {"$match": {"paper_id": {"$regex": "^PAPER_\\d+$"}}},
@@ -21,8 +46,20 @@ async def next_paper_id() -> str:
         {"$limit": 1},
     ])
     docs = await cursor.to_list(1)
-    next_n = docs[0]["n"] + 1 if docs else 2001
-    return f"PAPER_{next_n}"
+    return docs[0]["n"] if docs else 2000
+
+
+async def init_counters() -> None:
+    """Idempotente: inserta el doc counter si no existe, sincronizandolo con el max
+    de papers. Si ya existe pero quedo atras (ej. seed nuevo con PAPER_9999 manual),
+    avanza el counter al max actual."""
+    db = get_mongo()
+    max_n = await _max_paper_n()
+    existing = await db.counters.find_one({"_id": "paper_id"})
+    if not existing:
+        await db.counters.insert_one({"_id": "paper_id", "seq": max_n})
+    elif existing.get("seq", 0) < max_n:
+        await db.counters.update_one({"_id": "paper_id"}, {"$set": {"seq": max_n}})
 
 
 async def insert_job(job: dict[str, Any]) -> None:

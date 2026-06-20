@@ -1,6 +1,6 @@
 /**
  * Mirror de los schemas Pydantic de examen-api (app/schemas.py).
- * Cualquier cambio del backend que toque la API publica debe reflejarse aca.
+ * Cualquier cambio del backend que toque la API pública debe reflejarse aquí.
  */
 
 export interface ScoreBreakdown {

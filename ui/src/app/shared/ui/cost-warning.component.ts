@@ -1,4 +1,4 @@
-import { Component, input, output } from '@angular/core';
+import { Component, effect, input, output, signal } from '@angular/core';
 
 export type CostSeverity = 'info' | 'warn' | 'danger';
 
@@ -42,7 +42,7 @@ export function formatDuration(seconds: number): string {
 
           @if (severity() === 'danger') {
             <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" [checked]="acknowledged" (change)="onToggleAck($event)"
+              <input type="checkbox" [checked]="acknowledged()" (change)="onToggleAck($event)"
                      class="w-4 h-4 accent-ember">
               <span class="text-[12px] text-ink-2">Entiendo el costo y quiero continuar.</span>
             </label>
@@ -50,7 +50,7 @@ export function formatDuration(seconds: number): string {
 
           <div class="flex gap-2 justify-end pt-2">
             <button (click)="cancelled.emit()" class="pill">Cancelar</button>
-            <button (click)="onConfirm()" [disabled]="severity() === 'danger' && !acknowledged"
+            <button (click)="onConfirm()" [disabled]="severity() === 'danger' && !acknowledged()"
                     class="pill !bg-ink !text-paper disabled:opacity-30 disabled:cursor-not-allowed">
               Confirmar
             </button>
@@ -67,10 +67,17 @@ export class CostWarningComponent {
   severity = input<CostSeverity>('info');
   estimatedSeconds = input<number | null>(null);
 
-  acknowledged = false;
+  acknowledged = signal(false);
 
   confirmed = output<void>();
   cancelled = output<void>();
+
+  constructor() {
+    // Reset del checkbox cada vez que el modal se cierra.
+    effect(() => {
+      if (!this.open()) this.acknowledged.set(false);
+    });
+  }
 
   formatted = () => {
     const s = this.estimatedSeconds();
@@ -80,12 +87,12 @@ export class CostWarningComponent {
   styles = () => SEVERITY_STYLES[this.severity()];
 
   onToggleAck(ev: Event) {
-    this.acknowledged = (ev.target as HTMLInputElement).checked;
+    this.acknowledged.set((ev.target as HTMLInputElement).checked);
   }
 
   onConfirm() {
-    if (this.severity() === 'danger' && !this.acknowledged) return;
+    if (this.severity() === 'danger' && !this.acknowledged()) return;
     this.confirmed.emit();
-    this.acknowledged = false;
+    this.acknowledged.set(false);
   }
 }

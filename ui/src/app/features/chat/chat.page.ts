@@ -24,7 +24,7 @@ import { ChatMessage } from '../../core/models';
               </div>
             </div>
           } @empty {
-            <p class="text-ink-3 text-sm text-center py-8">Sin mensajes. Mandá uno abajo para empezar.</p>
+            <p class="text-ink-3 text-sm text-center py-8">Sin mensajes. Envía uno abajo para empezar.</p>
           }
           @if (waiting()) {
             <p class="font-mono text-[11px] text-ink-3 animate-pulse">qwen2.5:1.5b está pensando…</p>

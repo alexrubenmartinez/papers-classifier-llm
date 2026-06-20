@@ -87,17 +87,65 @@ def _looks_like_title(line: str) -> bool:
     return True
 
 
+_TITLE_END_RE = re.compile(
+    r"^(abstract|introduction|keywords|index terms|1\.\s|i\.\s|chapter\s|"
+    r"author|contents|table of contents|copyright|received|accepted|published|"
+    r"published online|email|e-mail|@)",
+    re.IGNORECASE,
+)
+
+
 def _pick_title(metadata_title: str, full_text: str) -> str:
-    """Devuelve el mejor candidato a titulo: metadata si pasa heuristica,
-    si no, la primera linea del texto que parezca titulo."""
+    """Devuelve el mejor candidato a titulo.
+
+    Heuristica:
+    1. Metadata title si pasa la check de `_looks_like_title`.
+    2. Concatena lineas consecutivas a partir de la primera que parece titulo
+       hasta encontrar abstract / autor / linea vacia / linea demasiado larga.
+       Esto resuelve papers donde el titulo viene partido en 2-3 lineas.
+    3. Fallback: primera linea no vacia.
+    """
     if metadata_title and _looks_like_title(metadata_title):
         return metadata_title.strip()
-    for line in full_text.split("\n"):
-        if _looks_like_title(line):
-            return line.strip()[:300]
-    # Fallback: primera linea no vacia (mejor que vacio).
-    for line in full_text.split("\n"):
-        s = line.strip()
+
+    lines = full_text.split("\n")
+    parts: list[str] = []
+    started = False
+
+    for raw in lines:
+        s = raw.strip()
+        if not started:
+            if _looks_like_title(s):
+                parts.append(s)
+                started = True
+                if len(s) >= 120:
+                    break
+            continue
+        # Ya empezamos: decidir si esta linea continua o termina el titulo.
+        if not s:
+            break
+        if _TITLE_END_RE.match(s):
+            break
+        if _TITLE_BAD_RE.match(s):
+            break
+        if any(s.lower().startswith(p) for p in _TITLE_BAD_PREFIXES):
+            break
+        if len(s) > 250:
+            # Linea muy larga: ya entramos al cuerpo del paper.
+            break
+        # Mantener si parece continuacion (sin signo de cierre fuerte en el anterior).
+        last = parts[-1]
+        if last.endswith(".") or last.endswith("!") or last.endswith("?"):
+            break
+        parts.append(s)
+        if sum(len(p) for p in parts) > 250:
+            break
+
+    if parts:
+        return " ".join(parts)[:300]
+
+    for raw in lines:
+        s = raw.strip()
         if s:
             return s[:200]
     return "(sin titulo)"

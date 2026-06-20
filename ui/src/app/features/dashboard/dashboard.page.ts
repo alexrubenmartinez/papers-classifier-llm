@@ -110,7 +110,7 @@ import { TierCardComponent } from './tier-card.component';
             }
           </ul>
         } @else {
-          <p class="text-ink-3 text-sm">Sin papers todavía. Subí uno desde <a routerLink="/upload" class="underline">/upload</a>.</p>
+          <p class="text-ink-3 text-sm">Sin papers todavía. Sube uno desde <a routerLink="/upload" class="underline">/upload</a>.</p>
         }
       </div>
 

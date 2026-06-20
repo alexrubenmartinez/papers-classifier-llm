@@ -46,6 +46,7 @@ def _now_iso() -> str:
 async def lifespan(_: FastAPI):
     ensure_bucket()
     await init_indices()
+    await repos.init_counters()
     pipeline.get_model()
     print("[startup] SBERT model loaded")
     seeded = await seed_if_empty()
@@ -149,7 +150,7 @@ async def upload_paper(
 
 @app.get("/papers", response_model=list[PaperSummary])
 async def list_papers_endpoint(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=5000),
     min_score: int = Query(0, ge=0, le=5),
 ) -> list[dict]:
     return await repos.list_papers(limit=limit, min_score=min_score)

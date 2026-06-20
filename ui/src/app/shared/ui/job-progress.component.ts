@@ -1,6 +1,6 @@
-import { Component, DestroyRef, OnInit, inject, input, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, input, signal } from '@angular/core';
 import { JobStatus } from '../../core/models';
-import { SseService } from '../../core/sse/sse.service';
+import { SseHandle, SseService } from '../../core/sse/sse.service';
 
 @Component({
   standalone: true,
@@ -44,16 +44,17 @@ export class JobProgressComponent implements OnInit {
   private sse = inject(SseService);
   private destroyRef = inject(DestroyRef);
   jobId = input.required<string>();
-  state = signal<JobStatus | null>(null);
+
+  // El handle se setea en ngOnInit (no en constructor) porque `jobId()` aun no
+  // existe en el momento de construccion. Usamos un signal para que `state` lo
+  // observe reactivamente y se actualice cuando llega.
+  private handle = signal<SseHandle<JobStatus> | null>(null);
+  state = computed<JobStatus | null>(() => this.handle()?.state() ?? null);
 
   ngOnInit() {
-    const handle = this.sse.streamJob(this.jobId());
-    // Re-emit del signal del SseService al signal local.
-    const sub = setInterval(() => this.state.set(handle.state()), 250);
-    this.destroyRef.onDestroy(() => {
-      clearInterval(sub);
-      handle.close();
-    });
+    const h = this.sse.streamJob(this.jobId());
+    this.handle.set(h);
+    this.destroyRef.onDestroy(() => h.close());
   }
 
   statusDot(status: JobStatus['status']): string {

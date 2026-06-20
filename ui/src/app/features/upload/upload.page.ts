@@ -24,7 +24,7 @@ import { JustifyMode, PapersService } from '../../core/api/papers.service';
             <p class="font-mono text-[13px] text-jade">{{ file()!.name }}</p>
             <p class="font-mono text-[11px] text-ink-3 mt-1">{{ (file()!.size / 1024).toFixed(1) }} KB</p>
           } @else {
-            <p class="text-ink-2">Arrastrá un PDF acá o hacé click para elegir uno.</p>
+            <p class="text-ink-2">Arrastra un PDF aquí o haz click para elegir uno.</p>
             <p class="font-mono text-[11px] text-ink-3 mt-2">solo .pdf · hasta 32 MB</p>
           }
         </label>

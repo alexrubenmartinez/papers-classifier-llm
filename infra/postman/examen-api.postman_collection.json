@@ -112,7 +112,7 @@
           "path": ["stream"],
           "query": [{ "key": "job_id", "value": "{{jobId}}" }]
         },
-        "description": "Vas a ver eventos job.progress para cada stage: queued → extracting_metadata → embedding_sbert → scoring → completed."
+        "description": "Verás eventos job.progress para cada stage: queued → extracting_metadata → embedding_sbert → scoring → completed."
       }
     },
     {
