@@ -153,6 +153,16 @@ RE_VENUE_WITH_YEAR = re.compile(
     re.IGNORECASE,
 )
 
+# DOI: "https://doi.org/10.XXXX/…" o solo "10.XXXX/…"
+RE_DOI = re.compile(r"(?:doi\.org/|\bdoi\s*:?\s*)10\.\d{4,9}/[\w.\-]+", re.IGNORECASE)
+
+# ISSN / e-ISSN / p-ISSN del journal — aparece como cabecera o pie de revista.
+RE_ISSN = re.compile(r"\b(?:e[-\s]?|p[-\s]?)?ISSN\s*[:\-]?\s*\d{4}\-\d{3}[\dXx]\b", re.IGNORECASE)
+
+# Lista de autores típica de papers (≥2 separadores ' ; ' con texto entre ellos):
+#   "Ammar Bajwa ; Aleem Al Razee Tonoy ; Sohel Rana ; Ishtiaque Ahmed"
+RE_AUTHOR_LIST = re.compile(r"\S\s*;\s+\S.+?\S\s*;\s+\S")
+
 
 def strip_journal_header(text: str) -> str:
     """Si el texto empieza con un nombre de revista y hay un separador, devuelve
@@ -204,6 +214,12 @@ def looks_like_title(text: str | None) -> bool:
         return False
     # Nombre de venue + año ("Global Research and Innovation Conference 2025").
     if RE_VENUE_WITH_YEAR.search(s):
+        return False
+    # DOI o ISSN — son metadata del journal, no título.
+    if RE_DOI.search(s) or RE_ISSN.search(s):
+        return False
+    # Lista de autores con separador ' ; ' (típica de papers).
+    if RE_AUTHOR_LIST.search(s):
         return False
     # Solo dígitos / símbolos: no es título
     if not any(c.isalpha() for c in s):

@@ -86,8 +86,14 @@ def load_inputs() -> pl.DataFrame:
           .alias("year")
     )
 
+    # Título: 1) extraído del PDF; 2) parseado del filename arxiv; 3) filename crudo
+    # (sin .pdf) como último recurso para que ninguna fila quede vacía en el reporte.
     df = df.with_columns(
-        pl.coalesce(["title_extracted", "title_from_filename"]).alias("title")
+        pl.coalesce([
+            "title_extracted",
+            "title_from_filename",
+            pl.col("original_filename").str.replace(r"\.pdf$", "", literal=False),
+        ]).alias("title")
     )
     return df
 
