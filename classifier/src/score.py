@@ -36,7 +36,7 @@ try:
     from classifier.src.config import (
         BUCKET, GOLD_KEYWORD_THRESHOLD, KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
         KEY_SILVER_FINAL, KEY_SILVER_EMBEDDINGS,
-        OUTPUTS, SBERT_MODEL,
+        MAX_SCORE, OUTPUTS, SBERT_MODEL,
         YEAR_MIN, YEAR_MAX,
     )
     from classifier.search_query import KEYWORDS_FLAT, query_as_natural_text
@@ -45,7 +45,7 @@ except ModuleNotFoundError:
     from classifier.src.config import (
         BUCKET, GOLD_KEYWORD_THRESHOLD, KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
         KEY_SILVER_FINAL, KEY_SILVER_EMBEDDINGS,
-        OUTPUTS, SBERT_MODEL,
+        MAX_SCORE, OUTPUTS, SBERT_MODEL,
         YEAR_MIN, YEAR_MAX,
     )
     from classifier.search_query import KEYWORDS_FLAT, query_as_natural_text
@@ -237,7 +237,9 @@ def run(skip_sbert: bool = False, use_cache: bool = True) -> int:
     n = df.height
     console.print(f"Papers a scorear: [bold]{n}[/bold]  ·  "
                   f"keywords: [bold]{len(KEYWORDS_FLAT)}[/bold]  ·  "
-                  f"Gold threshold: ≥ [bold]{GOLD_KEYWORD_THRESHOLD}[/bold]")
+                  f"score capado a {MAX_SCORE}  ·  "
+                  f"Gold threshold: ≥ [bold]{GOLD_KEYWORD_THRESHOLD}[/bold]  ·  "
+                  f"año ∈ [{YEAR_MIN}, {YEAR_MAX}]")
 
     df = df.with_columns(
         pl.concat_str([
@@ -263,7 +265,10 @@ def run(skip_sbert: bool = False, use_cache: bool = True) -> int:
             match_counts.append(count)
             matched_lists.append(matched)
             progress.advance(task)
-    score_arr = np.array(match_counts, dtype=int)
+    # score = #keywords distintas matched, capado a MAX_SCORE.
+    # El raw count se conserva en la justificación para trazabilidad.
+    raw_counts = np.array(match_counts, dtype=int)
+    score_arr = np.minimum(raw_counts, MAX_SCORE)
     console.print(f"[dim]keyword in {time.perf_counter()-started:.1f}s[/dim]")
 
     # ── TF-IDF (informativo) ── #
@@ -317,16 +322,15 @@ def run(skip_sbert: bool = False, use_cache: bool = True) -> int:
     s3.upload_file(str(out_local), BUCKET, KEY_SILVER_FINAL)
     console.print(f"\n[green]✓ silver[/green] → s3://{BUCKET}/{KEY_SILVER_FINAL}")
 
-    # Histograma de scores (0, 1, 2, …, GOLD_KEYWORD_THRESHOLD, +)
+    # Histograma de scores (0..MAX_SCORE, marca de Gold en threshold)
     table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Score (keywords matched)")
+    table.add_column("Score (capado a {})".format(MAX_SCORE))
     table.add_column("Conteo", justify="right")
     score_series = df["score"]
-    for s in range(0, GOLD_KEYWORD_THRESHOLD):
+    for s in range(0, MAX_SCORE + 1):
         c = (score_series == s).sum()
-        table.add_row(str(s), str(c))
-    ge_threshold = (score_series >= GOLD_KEYWORD_THRESHOLD).sum()
-    table.add_row(f"≥ {GOLD_KEYWORD_THRESHOLD} (Gold)", str(ge_threshold))
+        marker = " ← Gold" if s >= GOLD_KEYWORD_THRESHOLD else ""
+        table.add_row(f"{s}{marker}", str(c))
     console.print(table)
 
     table2 = Table(show_header=True, header_style="bold cyan")

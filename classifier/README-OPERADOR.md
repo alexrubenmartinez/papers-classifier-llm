@@ -26,9 +26,9 @@ Mientras corre, **captura**:
 | 2 | Fin Fase 1 | tabla rich "N/N OK · sin errores" + tamaño total | Ítem 3 (Bronze) |
 | 3 | UI MinIO | navegar a `https://group-one.duckdns.org/minio/` → bucket `examen-parcial` → carpeta `grupo3_ciberseguridad/bronze/papers/` mostrando los PDFs | Ítem 3 (Bronze) |
 | 4 | Fin Fase 2 | tabla rich con conteos de título/abstract/keywords/año | Ítem 4 (Silver) |
-| 5 | Fin Fase 3 | tabla rich distribución de scores (0..22, con corte `≥5 (Gold)`) | Ítem 1 (Algoritmo) |
+| 5 | Fin Fase 3 | tabla rich distribución de scores (0..5, con corte `≥4 (Gold)`) | Ítem 1 (Algoritmo) |
 | 6 | Fin Fase 4a | "✓ silver.csv → s3://…" + "✓ N/N PDFs copiados a silver" | Ítem 4 (Silver tier completo) |
-| 7 | Fin Fase 4b | "Papers Gold: N (score ≥ 5)" + "✓ N/N PDFs copiados a gold" | Ítem 5 (Gold) |
+| 7 | Fin Fase 4b | "Papers Gold: N (score ≥ 4)" + "✓ N/N PDFs copiados a gold" | Ítem 5 (Gold) |
 | 8 | Fin Fase 5 | tabla rich con el Top-10 ranking | Ítem 6 (Ranking) |
 | 9 | MinIO UI | bucket `examen-parcial/grupo3_ciberseguridad/silver/papers/` y `…/gold/papers/` con los PDFs visibles | Ítems 4, 5 (PDFs físicos por tier) |
 | 10 | CSV/XLSX | `outputs/silver.csv`, `outputs/gold.csv`, `outputs/ranking.csv` (y `.xlsx` opcionales) abiertos con datos visibles | Ítems 4, 5, 6 |

@@ -14,7 +14,7 @@ try:
     from classifier.src.config import (
         BUCKET, GOLD_KEYWORD_THRESHOLD, GROUP_PREFIX,
         KEY_GOLD_PARQUET, KEY_SILVER_FINAL,
-        KEY_REPORT_MD, OUTPUTS, YEAR_MIN, YEAR_MAX,
+        KEY_REPORT_MD, MAX_SCORE, OUTPUTS, YEAR_MIN, YEAR_MAX,
     )
     from classifier.search_query import KEYWORDS_FLAT, SEARCH_QUERY
 except ModuleNotFoundError:
@@ -22,7 +22,7 @@ except ModuleNotFoundError:
     from classifier.src.config import (
         BUCKET, GOLD_KEYWORD_THRESHOLD, GROUP_PREFIX,
         KEY_GOLD_PARQUET, KEY_SILVER_FINAL,
-        KEY_REPORT_MD, OUTPUTS, YEAR_MIN, YEAR_MAX,
+        KEY_REPORT_MD, MAX_SCORE, OUTPUTS, YEAR_MIN, YEAR_MAX,
     )
     from classifier.search_query import KEYWORDS_FLAT, SEARCH_QUERY
 
@@ -50,7 +50,6 @@ def run() -> int:
     decision_dist = Counter(silver["decision"].to_list())
     years = [y for y in silver["year"].to_list() if y is not None]
     year_dist = Counter(years)
-    max_score = int(silver["score"].max()) if silver.height else 0
 
     lines: list[str] = []
     lines.append(f"# Reporte de clasificación — {GROUP_PREFIX}")
@@ -68,20 +67,22 @@ def run() -> int:
     lines.append(f"- Papers en rango: **{silver['en_rango_temporal'].sum()}**")
     lines.append(
         f"- Umbral Gold: **score ≥ {GOLD_KEYWORD_THRESHOLD}** "
-        f"(de {len(KEYWORDS_FLAT)} keywords totales)."
+        f"(score capado a {MAX_SCORE}; lista de {len(KEYWORDS_FLAT)} keywords)."
     )
     lines.append(f"- Papers seleccionados a Gold: **{gold.height}**")
     lines.append("")
 
     lines.append("## Distribución por score (Silver completo)")
     lines.append("")
-    lines.append("`score = # keywords distintas matched en title ∪ keywords ∪ abstract`")
+    lines.append(
+        f"`score = min(# keywords distintas matched en title ∪ keywords ∪ abstract, {MAX_SCORE})`"
+    )
     lines.append("")
     lines.append("| Score | Conteo | % |")
     lines.append("|---:|---:|---:|")
-    for s in range(max(max_score, GOLD_KEYWORD_THRESHOLD), -1, -1):
+    for s in range(MAX_SCORE, -1, -1):
         c = score_dist.get(s, 0)
-        marker = "  ← Gold ≥" if s == GOLD_KEYWORD_THRESHOLD else ""
+        marker = " ← Gold" if s >= GOLD_KEYWORD_THRESHOLD else ""
         lines.append(f"| {s}{marker} | {c} | {c*100/max(silver.height,1):.1f}% |")
     lines.append("")
 
@@ -125,10 +126,14 @@ def run() -> int:
     lines.append(
         f"Para cada paper se cuenta cuántas de las **{len(KEYWORDS_FLAT)} keywords** "
         "aparecen al menos una vez (substring match, case-insensitive) en el texto "
-        "concatenado de **título ∪ keywords ∪ abstract**. Ese conteo es el `score`."
+        f"concatenado de **título ∪ keywords ∪ abstract**, capado a **{MAX_SCORE}**. "
+        "El raw count se preserva en la columna `justificacion`."
     )
     lines.append("")
-    lines.append(f"- **Gold**: `score ≥ {GOLD_KEYWORD_THRESHOLD}` y año en rango.")
+    lines.append(
+        f"- **Gold**: `score ≥ {GOLD_KEYWORD_THRESHOLD}` (1..{MAX_SCORE}) y año en rango "
+        f"[{YEAR_MIN}, {YEAR_MAX}] (últimos 10 años, dinámico)."
+    )
     lines.append("- **Silver**: todos los demás.")
     lines.append("")
     lines.append("Las columnas `tfidf_cosine` y `sbert_cosine` se calculan y persisten "

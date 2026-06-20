@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,13 +55,17 @@ KEY_REPORT_MD = f"{PFX_REPORTS}/report.md"
 
 # ───── Regla de tier (única regla que decide Gold) ───── #
 # El score de cada paper es el conteo de keywords distintas de KEYWORDS_FLAT que
-# aparecen en title ∪ keywords ∪ abstract. ≥ threshold ⇒ Gold.
-GOLD_KEYWORD_THRESHOLD = 5
+# aparecen en title ∪ keywords ∪ abstract, capado a MAX_SCORE.
+# Gold = score ≥ GOLD_KEYWORD_THRESHOLD y año en rango.
+GOLD_KEYWORD_THRESHOLD = 4
+MAX_SCORE = 5
 
 
-# ───── Filtro temporal (se aplica además del threshold) ───── #
-YEAR_MIN = 2016
-YEAR_MAX = 2026
+# ───── Filtro temporal: últimos 10 años (dinámico) ───── #
+# Se computa por año de calendario actual al momento del run; YEAR_MAX puede
+# overridearse vía env var para reproducir un run histórico.
+YEAR_MAX = int(os.environ.get("YEAR_MAX", date.today().year))
+YEAR_MIN = int(os.environ.get("YEAR_MIN", YEAR_MAX - 10))
 
 
 # ───── Métricas auxiliares (informativas, NO deciden tier) ───── #

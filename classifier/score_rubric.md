@@ -9,11 +9,11 @@ PDFs (Bronze, inmutable)
    │
    ├── extract metadata (Silver-raw)            → metadata.parquet
    │
-   ├── score = # keywords distintas matched     → silver.parquet (corpus completo)
+   ├── score = min(#kw matched, 5)              → silver.parquet (corpus completo)
    │           en title ∪ keywords ∪ abstract     + copia 1-a-1 de PDFs a silver/papers/
    │                                              + silver.csv (primario) + silver.xlsx (opcional)
    │
-   ├── Gold (score ≥ 5 + año en rango)          → gold.parquet
+   ├── Gold (score ≥ 4 + año en últimos 10)     → gold.parquet
    │                                              + copia de PDFs a gold/papers/
    │                                              + gold.csv (primario) + gold.xlsx (opcional)
    │
@@ -41,24 +41,27 @@ cuenta 1 si aparece al menos una vez en el texto combinado del paper.
 ## 3. Score (regla única de tier)
 
 ```
-score = | { kw ∈ KEYWORDS_FLAT : kw aparece en normalize(title ⊔ keywords ⊔ abstract) } |
+raw_matches = | { kw ∈ KEYWORDS_FLAT : kw aparece en normalize(title ⊔ keywords ⊔ abstract) } |
+score       = min(raw_matches, MAX_SCORE)        # MAX_SCORE = 5
 ```
 
 - Frases multi-palabra (`"data lakehouse"`, `"time-travel query"`) cuentan como 1.
 - Comparación case-insensitive, con normalización de separadores (`-`, `_`, `/`, espacios múltiples).
 - Substring match (no requiere bordes de palabra), para tolerar variantes de tokenización del extractor.
-
-Rango posible del score: `0 .. 22` (`len(KEYWORDS_FLAT)`).
+- El `score` está acotado a `0..5` para que sea comparable con rúbricas estándar Likert.
+  El `raw_matches` (0..22) se preserva en la columna `justificacion` para trazabilidad.
 
 ## 4. Decisión
 
 | Score | Año | Decisión |
 |:---:|:---:|---|
-| ≥ 5 | 2016-2026 | **Gold** |
-| ≥ 5 | fuera de rango | Gold fuera de rango temporal |
-| < 5 | cualquiera | Silver |
+| ≥ 4 | últimos 10 años | **Gold** |
+| ≥ 4 | fuera de rango | Gold fuera de rango temporal |
+| < 4 | cualquiera | Silver |
 
-El umbral `5` se define en `config.py::GOLD_KEYWORD_THRESHOLD` y es la única decisión de tier.
+El umbral `4` se define en `config.py::GOLD_KEYWORD_THRESHOLD`. El rango temporal se computa
+dinámicamente como `[date.today().year - 10, date.today().year]` y se puede overridear con
+las env vars `YEAR_MIN` / `YEAR_MAX`.
 
 ## 5. Métricas auxiliares (informativas, NO deciden tier)
 

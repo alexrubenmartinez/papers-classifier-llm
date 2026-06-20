@@ -7,8 +7,8 @@ Caso de uso de referencia: clasificación de PDFs para la tesis del Grupo 3 — 
 ## Cómo decide cada tier
 
 - **Bronze**: PDFs originales, inmutables, subidos una sola vez.
-- **Silver**: TODOS los papers procesados — metadata extraída + `score = # keywords distintas matched` + **copia 1-a-1 del PDF** a `silver/papers/`.
-- **Gold**: subconjunto con `score ≥ 5` y año en rango [2016, 2026]; los PDFs se **copian** a `gold/papers/`.
+- **Silver**: TODOS los papers procesados — metadata extraída + `score = min(#keywords distintas matched, 5)` + **copia 1-a-1 del PDF** a `silver/papers/`.
+- **Gold**: subconjunto con `score ≥ 4` y año dentro de los **últimos 10 años** (computado dinámicamente); los PDFs se **copian** a `gold/papers/`.
 
 Las métricas auxiliares `tfidf_cosine` y `sbert_cosine` se siguen calculando y persisten como columnas informativas en el CSV, pero **no intervienen** en la decisión de tier.
 
@@ -105,9 +105,10 @@ El `Makefile` del directorio `classifier/` envuelve estos comandos: `make deploy
 ## Scoring
 
 ```
-score = | { kw ∈ KEYWORDS_FLAT : kw aparece en normalize(title ⊔ keywords ⊔ abstract) } |
-decision = "Gold"   si score ≥ GOLD_KEYWORD_THRESHOLD (5) y año ∈ [2016, 2026]
-         = "Silver" en caso contrario
+raw_matches = | { kw ∈ KEYWORDS_FLAT : kw aparece en normalize(title ⊔ keywords ⊔ abstract) } |
+score       = min(raw_matches, MAX_SCORE)        # MAX_SCORE = 5 → score ∈ {0,1,2,3,4,5}
+decision    = "Gold"   si score ≥ GOLD_KEYWORD_THRESHOLD (4) y año ∈ últimos 10 años
+            = "Silver" en caso contrario
 ```
 
 - **22 keywords** organizadas semánticamente en la query Scopus (lakehouse / security /
