@@ -1,0 +1,33 @@
+# FastAPI examen-api — Fase 3.
+# Deploy:
+#   scp -r api/ root@VPS:/root/proyecto_papers/examen-api/
+#   ssh root@VPS "cd /root/proyecto_papers/examen-api && docker compose up -d --build"
+
+services:
+  examen-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: examen-api:latest
+    container_name: examen-api
+    restart: unless-stopped
+    networks:
+      - web
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_DEFAULT_MODEL: qwen2.5:1.5b
+      MONGO_URI: mongodb://admin:REPLACE_PASSWORD@mongodb:27017/?authSource=admin
+      MONGO_DB: examen_api
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: REPLACE_PASSWORD
+      MINIO_BUCKET: examen-parcial
+      MINIO_PREFIX: examen-api/uploads
+      HF_HOME: /root/.cache/huggingface
+    volumes:
+      - ./hf_cache:/root/.cache/huggingface
+
+networks:
+  web:
+    external: true
+    name: stack_web

@@ -1,0 +1,92 @@
+{
+  "info": {
+    "name": "Ollama API (examen UNMSM)",
+    "description": "Fase 0 del API del examen. Apunta al Ollama del VPS group-one detras de nginx con API key.\n\nVariables:\n- baseUrl: https://ollama-api.your-vps.example.com\n- apiKey: clave compartida del examen (X-API-Key header)\n- model: qwen2.5:1.5b por defecto",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://ollama-api.your-vps.example.com" },
+    { "key": "apiKey", "value": "REPLACE_API_KEY" },
+    { "key": "model",  "value": "qwen2.5:1.5b" }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key",   "value": "X-API-Key",      "type": "string" },
+      { "key": "value", "value": "{{apiKey}}",     "type": "string" },
+      { "key": "in",    "value": "header",         "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "00 — Health (root)",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/", "host": ["{{baseUrl}}"], "path": [""] }
+      }
+    },
+    {
+      "name": "01 — List local models",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/api/tags", "host": ["{{baseUrl}}"], "path": ["api", "tags"] }
+      }
+    },
+    {
+      "name": "02 — Chat (non-streaming)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"model\": \"{{model}}\",\n  \"stream\": false,\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"Sos un asistente conciso. Responde en espanol neutral en una sola oracion.\" },\n    { \"role\": \"user\",   \"content\": \"Que es zero trust en ciberseguridad?\" }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/chat", "host": ["{{baseUrl}}"], "path": ["api", "chat"] }
+      }
+    },
+    {
+      "name": "03 — Chat (streaming NDJSON)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"model\": \"{{model}}\",\n  \"stream\": true,\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Resume el paper 'Zero Trust Architecture' en 3 viñetas.\" }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/chat", "host": ["{{baseUrl}}"], "path": ["api", "chat"] }
+      }
+    },
+    {
+      "name": "04 — Generate (completion simple)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"model\": \"{{model}}\",\n  \"stream\": false,\n  \"prompt\": \"Completa: La arquitectura zero trust se basa en\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/generate", "host": ["{{baseUrl}}"], "path": ["api", "generate"] }
+      }
+    },
+    {
+      "name": "05 — OpenAI-compatible chat completions",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"model\": \"{{model}}\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Decime una frase corta sobre microsegmentacion de redes.\" }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/v1/chat/completions", "host": ["{{baseUrl}}"], "path": ["v1", "chat", "completions"] }
+      }
+    },
+    {
+      "name": "99 — Auth check (sin API key → 401)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/", "host": ["{{baseUrl}}"], "path": [""] }
+      }
+    }
+  ]
+}

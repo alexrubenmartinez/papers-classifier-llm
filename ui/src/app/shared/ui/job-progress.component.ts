@@ -1,0 +1,65 @@
+import { Component, DestroyRef, OnInit, inject, input, signal } from '@angular/core';
+import { JobStatus } from '../../core/models';
+import { SseService } from '../../core/sse/sse.service';
+
+@Component({
+  standalone: true,
+  selector: 'app-job-progress',
+  template: `
+    @if (state(); as job) {
+      <div class="space-y-3">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full inline-block {{ statusDot(job.status) }}"
+                  [class.animate-pulse]="job.status === 'running' || job.status === 'queued'"></span>
+            <span class="font-mono text-[11px] uppercase tracking-wider text-ink-2">{{ job.type || 'job' }}</span>
+            <span class="font-mono text-[11px] text-ink-3">· {{ job.status }}</span>
+          </div>
+          @if (job.total) {
+            <span class="font-mono text-[11px] tabular-nums text-ink-3">{{ job.processed ?? 0 }}/{{ job.total }}</span>
+          }
+        </div>
+
+        @if (job.total && job.processed != null) {
+          <div class="h-1.5 rounded-full bg-paper-2 overflow-hidden">
+            <div class="h-full bg-jade transition-all duration-500 ease-spring"
+                 [style.width.%]="(job.processed / job.total) * 100"></div>
+          </div>
+        }
+
+        <p class="font-mono text-[11px] text-ink-2">
+          <span class="text-ink-3">stage:</span> {{ job.stage }}
+        </p>
+
+        @if (job.error) {
+          <p class="font-mono text-[11px] text-ember">{{ job.error }}</p>
+        }
+      </div>
+    } @else {
+      <p class="font-mono text-[11px] text-ink-3">Conectando…</p>
+    }
+  `,
+})
+export class JobProgressComponent implements OnInit {
+  private sse = inject(SseService);
+  private destroyRef = inject(DestroyRef);
+  jobId = input.required<string>();
+  state = signal<JobStatus | null>(null);
+
+  ngOnInit() {
+    const handle = this.sse.streamJob(this.jobId());
+    // Re-emit del signal del SseService al signal local.
+    const sub = setInterval(() => this.state.set(handle.state()), 250);
+    this.destroyRef.onDestroy(() => {
+      clearInterval(sub);
+      handle.close();
+    });
+  }
+
+  statusDot(status: JobStatus['status']): string {
+    if (status === 'completed') return 'bg-jade';
+    if (status === 'failed') return 'bg-ember';
+    if (status === 'running' || status === 'queued') return 'bg-jade';
+    return 'bg-ink-3';
+  }
+}

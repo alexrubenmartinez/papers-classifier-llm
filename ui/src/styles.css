@@ -1,0 +1,300 @@
+@import "tailwindcss";
+
+/* Dark mode strategy: class-based, controlled by ThemeService */
+@variant dark (&:where(.dark, .dark *));
+
+/* --------------------------------------------------------------------------
+ * Design tokens — bone & emerald (light) | obsidian & lime (dark)
+ * Inspired by ceramics and after-hours coastal labs, not Bootstrap purple.
+ * ------------------------------------------------------------------------ */
+:root {
+  --ink: 15 24 23;          /* primary text — green-black, not pure black */
+  --ink-2: 91 105 99;        /* secondary text */
+  --ink-3: 138 149 144;      /* faint metadata */
+  --paper: 245 241 234;     /* base bg — warm bone */
+  --paper-2: 251 248 242;   /* elevated bg — eggshell */
+  --jade: 31 68 56;         /* british racing green */
+  --ember: 255 107 53;      /* terracotta vibrant */
+  --bone: 242 232 220;
+  --line: 15 24 23;         /* used at low alpha for borders */
+  --glass: 255 255 255;
+  --glass-alpha: 0.42;
+}
+
+:root.dark {
+  --ink: 242 238 230;
+  --ink-2: 178 188 184;
+  --ink-3: 108 119 114;
+  --paper: 10 12 11;        /* obsidian with green undertone */
+  --paper-2: 19 23 26;
+  --jade: 167 243 208;      /* mint phosphor */
+  --ember: 255 140 90;       /* coral */
+  --bone: 30 35 33;
+  --line: 255 255 255;
+  --glass: 255 255 255;
+  --glass-alpha: 0.045;
+}
+
+/* --------------------------------------------------------------------------
+ * Base
+ * ------------------------------------------------------------------------ */
+html, body {
+  background: rgb(var(--paper));
+  color: rgb(var(--ink));
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 700ms cubic-bezier(0.22, 1, 0.36, 1),
+              color 500ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+body { overflow-x: hidden; min-height: 100dvh; }
+* { box-sizing: border-box; }
+
+::selection {
+  background-color: rgb(var(--ember));
+  color: rgb(var(--paper));
+}
+
+/* --------------------------------------------------------------------------
+ * Typography utilities (used directly as classes)
+ * ------------------------------------------------------------------------ */
+.font-display {
+  font-family: 'Fraunces', ui-serif, Georgia, serif;
+  font-feature-settings: 'ss01', 'ss02', 'ss03';
+  font-variation-settings: 'opsz' 144, 'SOFT' 50;
+  letter-spacing: -0.04em;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, 'Courier New', monospace;
+  font-feature-settings: 'ss02';
+}
+
+.font-display-it {
+  font-family: 'Fraunces', ui-serif, Georgia, serif;
+  font-style: italic;
+  font-feature-settings: 'ss01';
+  letter-spacing: -0.03em;
+}
+
+/* --------------------------------------------------------------------------
+ * Color utility classes (token-backed, theme-aware)
+ * ------------------------------------------------------------------------ */
+.text-ink   { color: rgb(var(--ink)); }
+.text-ink-2 { color: rgb(var(--ink-2)); }
+.text-ink-3 { color: rgb(var(--ink-3)); }
+.text-jade  { color: rgb(var(--jade)); }
+.text-ember { color: rgb(var(--ember)); }
+.text-paper { color: rgb(var(--paper)); }
+.bg-paper   { background-color: rgb(var(--paper)); }
+.bg-paper-2 { background-color: rgb(var(--paper-2)); }
+.bg-jade    { background-color: rgb(var(--jade)); }
+.bg-ember   { background-color: rgb(var(--ember)); }
+.bg-bone    { background-color: rgb(var(--bone)); }
+.border-line   { border-color: rgb(var(--line) / 0.1); }
+.border-line-2 { border-color: rgb(var(--line) / 0.18); }
+
+/* --------------------------------------------------------------------------
+ * Glass — Apple-grade composite (base + inner highlight + edge + shadow)
+ * ------------------------------------------------------------------------ */
+.glass {
+  position: relative;
+  background: rgb(var(--glass) / var(--glass-alpha));
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgb(var(--line) / 0.08);
+  box-shadow:
+    0 1px 0 rgb(var(--glass) / 0.55) inset,
+    0 0 0 1px rgb(var(--line) / 0.03),
+    0 24px 60px -18px rgb(var(--ink) / 0.10);
+  border-radius: 28px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+:root.dark .glass {
+  border: 1px solid rgb(255 255 255 / 0.07);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.08) inset,
+    0 0 0 1px rgb(255 255 255 / 0.025),
+    0 28px 72px -20px rgb(0 0 0 / 0.65);
+}
+
+.glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(var(--glass) / 0.34), transparent 48%);
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 0;
+}
+
+:root.dark .glass::before {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.045), transparent 50%);
+}
+
+.glass > * { position: relative; z-index: 1; }
+
+.glass-flat {
+  background: rgb(var(--glass) / calc(var(--glass-alpha) * 0.6));
+  backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgb(var(--line) / 0.06);
+  border-radius: 20px;
+}
+
+/* --------------------------------------------------------------------------
+ * Pill / chip
+ * ------------------------------------------------------------------------ */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.95rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  text-transform: uppercase;
+  border-radius: 999px;
+  background: rgb(var(--glass) / 0.5);
+  border: 1px solid rgb(var(--line) / 0.08);
+  color: rgb(var(--ink));
+  backdrop-filter: blur(18px);
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+              background 300ms ease,
+              color 300ms ease,
+              border-color 300ms ease;
+}
+
+.pill:hover {
+  background: rgb(var(--jade));
+  color: rgb(var(--paper));
+  border-color: rgb(var(--jade));
+  transform: translateY(-1px);
+}
+
+.pill-mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* --------------------------------------------------------------------------
+ * Animated underline (uline)
+ * ------------------------------------------------------------------------ */
+.uline {
+  position: relative;
+  display: inline-block;
+  padding-bottom: 2px;
+}
+.uline::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.uline:hover::after { transform: scaleX(1); }
+
+/* --------------------------------------------------------------------------
+ * Numeric / display digit
+ * ------------------------------------------------------------------------ */
+.digit-display {
+  font-family: 'Fraunces', ui-serif, serif;
+  font-weight: 600;
+  font-variation-settings: 'opsz' 144, 'SOFT' 30;
+  letter-spacing: -0.06em;
+  line-height: 0.85;
+}
+
+/* --------------------------------------------------------------------------
+ * Ambient background — paired with <app-glow-background />
+ * ------------------------------------------------------------------------ */
+.ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.ambient-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.6;
+  mix-blend-mode: multiply;
+  animation: float 24s ease-in-out infinite;
+  will-change: transform;
+}
+
+:root.dark .ambient-blob {
+  mix-blend-mode: screen;
+  opacity: 0.45;
+  filter: blur(140px);
+}
+
+@keyframes float {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(40px, -30px, 0) scale(1.1); }
+  66%      { transform: translate3d(-30px, 40px, 0) scale(0.95); }
+}
+
+/* SVG noise overlay */
+.noise {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/></svg>");
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+}
+
+:root.dark .noise { opacity: 0.07; mix-blend-mode: soft-light; }
+
+/* --------------------------------------------------------------------------
+ * Tilt card primitive (CSS variables set by JS in directive)
+ * ------------------------------------------------------------------------ */
+.tilt {
+  transform: perspective(900px)
+             rotateX(var(--tx, 0deg))
+             rotateY(var(--ty, 0deg))
+             translateZ(0);
+  transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+/* --------------------------------------------------------------------------
+ * Custom scrollbar
+ * ------------------------------------------------------------------------ */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--ink) / 0.16);
+  border-radius: 100px;
+  border: 3px solid rgb(var(--paper));
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: rgb(var(--ink) / 0.32); }
+
+/* --------------------------------------------------------------------------
+ * Reduced motion
+ * ------------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+  .ambient-blob { animation: none; }
+}

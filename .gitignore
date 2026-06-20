@@ -1,0 +1,33 @@
+# Credenciales y configuración local
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.log
+
+# Node / Angular
+node_modules/
+dist/
+.angular/
+
+# Docker artefactos locales
+ollama-models/
+hf_cache/
+models/
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Build / temporales
+*.tar.gz
+*.zip
+tmp/
