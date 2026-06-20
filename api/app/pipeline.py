@@ -222,10 +222,26 @@ def _kw_matches(text_lower: str, kw: str) -> bool:
 
 
 def keyword_score(text: str, axes: dict[str, list[str]]) -> float:
-    """Cobertura de ejes tematicos (0-1). Cuanta proporcion de ejes tienen al menos 1 match."""
+    """Score 0-1 basado en matches de keywords. Tiene dos modos:
+
+    - **1 eje (modo simple)**: devuelve `% de keywords que matchean / total`.
+      Continuo y discriminativo: dos papers pueden diferir en granularidad.
+    - **N ejes (modo avanzado)**: devuelve `# ejes con al menos 1 match / # ejes`.
+      Coverage clasico: mide cuantas dimensiones del tema cubre el paper.
+    """
     if not text or not axes:
         return 0.0
     text_lower = text.lower()
+
+    # Modo simple: una sola lista de keywords.
+    if len(axes) == 1:
+        only_kws = next(iter(axes.values()))
+        if not only_kws:
+            return 0.0
+        matched = sum(1 for kw in only_kws if _kw_matches(text_lower, kw))
+        return matched / len(only_kws)
+
+    # Modo avanzado: coverage por ejes.
     matched_axes = sum(
         1 for kws in axes.values() if any(_kw_matches(text_lower, kw) for kw in kws)
     )
