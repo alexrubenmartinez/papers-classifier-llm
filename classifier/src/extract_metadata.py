@@ -87,11 +87,14 @@ TITLE_BLACKLIST = [
 ]
 
 # Tokens de cabecera de revista / running header — versión all-caps (estricta,
-# para detectar "INTERNATIONAL JOURNAL OF…" como header solitario).
+# para detectar "INTERNATIONAL JOURNAL OF…", "MULTIDISCIPLINARY RESEARCH", etc.
+# como header solitario).
 JOURNAL_HEADER_TOKENS = re.compile(
     r"\b(?:JOURNAL|PROCEEDINGS|TRANSACTIONS|CONFERENCE|SYMPOSIUM|WORKSHOP|"
     r"REVIEW|LETTERS|MAGAZINE|BULLETIN|ANNALS|ACTA|ACM|IEEE|IEEE/ACM|"
-    r"SPRINGER|ELSEVIER|VOL\.?|VOLUME|ISSUE|PP\.|PAGES?|ISSN|DOI)\b"
+    r"SPRINGER|ELSEVIER|VOL\.?|VOLUME|ISSUE|PP\.|PAGES?|ISSN|DOI|"
+    r"RESEARCH|STUDIES|SCIENCES?|MULTIDISCIPLINARY|INTERDISCIPLINARY|"
+    r"INTERNATIONAL|INNOVATIONS?|ENGINEERING|TECHNOLOGY|APPLICATIONS?)\b"
 )
 
 # Prefijo de nombre de revista — case-insensitive, captura "Transactions on …",
@@ -124,6 +127,20 @@ RE_ARXIV_CATEGORY = re.compile(
     r"nucl-[a-z]+|quant-ph|q-bio|q-fin|eess|econ)\.[A-Za-z\-]+\]",
     re.IGNORECASE,
 )
+
+# Encabezados de sección típicos: "1. Introduction", "II. Methodology",
+# "3 Conclusion", "I Background", etc. No son títulos.
+RE_SECTION_HEADING = re.compile(
+    r"^\s*(?:\d{1,2}|[IVX]{1,4})\s*[\.\)]?\s+"
+    r"(?:Introduction|Method(?:s|ology)?|Conclusion[s]?|Abstract|References?|"
+    r"Related\s+Work|Background|Discussion|Results?|Evaluation|Approach(?:es)?|"
+    r"Experiment(?:s|al(?:\s+Setup)?)?|Analysis|Preliminaries|Future\s+Work|"
+    r"Acknowled?gements?|Motivation|Overview|Contributions?|Summary)\s*$",
+    re.IGNORECASE,
+)
+
+# Email (a veces PyMuPDF extrae el email del autor con fuente prominente).
+RE_EMAIL = re.compile(r"\b[\w.\-]+@[\w.\-]+\.[A-Za-z]{2,}\b")
 
 
 def strip_journal_header(text: str) -> str:
@@ -167,6 +184,12 @@ def looks_like_title(text: str | None) -> bool:
     # Stamp arXiv (margen izquierdo de la primera página del preprint).
     # Aparece como "arXiv:2504.20768v2 [cs.DB] 17 Oct 2025" — no es título.
     if RE_ARXIV_STAMP.search(s) or RE_ARXIV_CATEGORY.search(s):
+        return False
+    # Encabezado de sección ("1. Introduction", "II. Methodology", etc.).
+    if RE_SECTION_HEADING.match(s):
+        return False
+    # Email de autor (PyMuPDF a veces lo extrae con fuente grande).
+    if RE_EMAIL.search(s):
         return False
     # Solo dígitos / símbolos: no es título
     if not any(c.isalpha() for c in s):
