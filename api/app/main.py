@@ -176,6 +176,13 @@ async def ranking_endpoint(top: int = Query(10, ge=1, le=50)) -> list[dict]:
     return await repos.ranking(top=top)
 
 
+@app.get("/jobs", response_model=list[JobStatus])
+async def list_jobs_endpoint(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
+    """Lista los jobs mas recientes (ingest, reclassify, justify, import).
+    Ordenados por created_at descendente."""
+    return await repos.list_jobs(limit=limit)
+
+
 @app.get("/jobs/{job_id}", response_model=JobStatus)
 async def get_job_endpoint(job_id: str = Path(...)) -> dict:
     job = await repos.get_job(job_id)

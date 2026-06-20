@@ -83,6 +83,13 @@ async def get_job(job_id: str) -> dict[str, Any] | None:
     return await db.jobs.find_one({"job_id": job_id}, projection={"_id": 0})
 
 
+async def list_jobs(limit: int = 50) -> list[dict[str, Any]]:
+    """Devuelve los jobs mas recientes ordenados por created_at desc."""
+    db = get_mongo()
+    cursor = db.jobs.find({}, projection={"_id": 0}).sort("created_at", -1).limit(limit)
+    return await cursor.to_list(limit)
+
+
 async def insert_paper(paper: dict[str, Any]) -> None:
     db = get_mongo()
     await db.papers.insert_one(paper)
