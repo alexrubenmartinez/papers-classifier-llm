@@ -110,6 +110,21 @@ JOURNAL_NAME_PREFIX = re.compile(
 # o ≥6 espacios consecutivos.
 TITLE_SEPARATOR = re.compile(r"(?:_{3,}|-{4,}|\s{6,})")
 
+# Stamp de arXiv (lo imprime el preprint en el margen izquierdo de la pág. 1):
+#   arXiv:2504.20768v2 [cs.DB] 17 Oct 2025
+#   arXiv:2512.22305v1 [cs.LG] 26 Dec 2025
+#   arXiv:cs/0501123  (legacy)
+RE_ARXIV_STAMP = re.compile(
+    r"\barXiv\s*:\s*(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z\-]+/\d{7})",
+    re.IGNORECASE,
+)
+# Categoría arXiv suelta: [cs.LG], [stat.ML], [cond-mat.dis-nn], etc.
+RE_ARXIV_CATEGORY = re.compile(
+    r"\[(?:cs|stat|math|physics|astro-ph|cond-mat|gr-qc|hep-[a-z]+|nlin|"
+    r"nucl-[a-z]+|quant-ph|q-bio|q-fin|eess|econ)\.[A-Za-z\-]+\]",
+    re.IGNORECASE,
+)
+
 
 def strip_journal_header(text: str) -> str:
     """Si el texto empieza con un nombre de revista y hay un separador, devuelve
@@ -149,6 +164,10 @@ def looks_like_title(text: str | None) -> bool:
     # antes de llegar acá.
     if JOURNAL_NAME_PREFIX.match(s) and not TITLE_SEPARATOR.search(s):
         return False
+    # Stamp arXiv (margen izquierdo de la primera página del preprint).
+    # Aparece como "arXiv:2504.20768v2 [cs.DB] 17 Oct 2025" — no es título.
+    if RE_ARXIV_STAMP.search(s) or RE_ARXIV_CATEGORY.search(s):
+        return False
     # Solo dígitos / símbolos: no es título
     if not any(c.isalpha() for c in s):
         return False
@@ -173,6 +192,10 @@ def extract_title_from_page(page) -> str | None:
                     continue
                 y_top = blk["bbox"][1]
                 if y_top > page_h * 0.55:
+                    continue
+                # Stamp arXiv vertical / margen: descartarlo aquí evita que se mezcle
+                # con el título real cuando comparten tamaño de fuente.
+                if RE_ARXIV_STAMP.search(text) or RE_ARXIV_CATEGORY.search(text):
                     continue
                 candidates.append((size, y_top, text))
     if not candidates:
