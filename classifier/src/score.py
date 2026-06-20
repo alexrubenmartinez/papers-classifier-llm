@@ -59,6 +59,48 @@ console = Console()
 
 
 # ─────────────────────────────────────────────────────────────── #
+# Limpieza de filenames como título de fallback                  #
+# ─────────────────────────────────────────────────────────────── #
+_RE_PDF_EXT = re.compile(r"\.pdf$", re.IGNORECASE)
+_RE_FN_SEQ = re.compile(r"^\d{1,5}_")
+# Topic se aplica SOLO si hubo seq previa, así nombres tipo 'paper_final.pdf' no
+# pierden su primera palabra. Sin guion bajo en la clase de chars para no comerse
+# múltiples tokens.
+_RE_FN_TOPIC = re.compile(r"^[a-z][a-z0-9\-]{2,30}_", re.IGNORECASE)
+_RE_FN_ARXIV_MODERN = re.compile(r"^\d{4}\.\d{4,5}(?:v\d+)?_")
+_RE_FN_ARXIV_LEGACY = re.compile(r"^[a-z\-]+/\d{7}_", re.IGNORECASE)
+# DOI: usar [A-Za-z0-9.\-] (sin '_') para que el segundo grupo no se trague el
+# título completo. Formato: "10.NNNNN_<doi-suffix>_<title…>".
+_RE_FN_DOI = re.compile(r"^\d{1,3}\.\d{4,7}_[A-Za-z0-9.\-]+_")
+_RE_FN_AMP = re.compile(r"\bamp\b")
+
+
+def _clean_filename_as_title(filename: str | None) -> str | None:
+    """Convierte un filename PDF crudo en un título humano-legible.
+
+    Quita la extensión, los prefijos de upload (seq numérico, topic, arxiv-id o
+    DOI), reemplaza '_' por ' ' y decodifica `amp` -> `&`. Devuelve None si
+    queda vacío.
+    """
+    if not filename:
+        return None
+    name = _RE_PDF_EXT.sub("", filename)
+    had_seq = bool(_RE_FN_SEQ.match(name))
+    if had_seq:
+        name = _RE_FN_SEQ.sub("", name, count=1)
+        # Topic solo se considera tras una seq numérica — fuera de ese contexto
+        # no podemos asumir que la primera palabra sea un tag.
+        name = _RE_FN_TOPIC.sub("", name, count=1)
+    name = _RE_FN_ARXIV_MODERN.sub("", name, count=1)
+    name = _RE_FN_ARXIV_LEGACY.sub("", name, count=1)
+    name = _RE_FN_DOI.sub("", name, count=1)
+    name = name.replace("_", " ")
+    name = _RE_FN_AMP.sub("&", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name or None
+
+
+# ─────────────────────────────────────────────────────────────── #
 # Cargar bronze + silver_metadata y joinarlos                    #
 # ─────────────────────────────────────────────────────────────── #
 def load_inputs() -> pl.DataFrame:
@@ -86,15 +128,20 @@ def load_inputs() -> pl.DataFrame:
           .alias("year")
     )
 
-    # Título: 1) extraído del PDF; 2) parseado del filename arxiv; 3) filename crudo
-    # (sin .pdf) como último recurso para que ninguna fila quede vacía en el reporte.
+    # Título: 1) extraído del PDF; 2) parseado del filename arxiv (upload_bronze);
+    # 3) filename crudo limpiado como último recurso (cubre filenames basados en
+    # DOI que el parser de upload no reconoce — devolvían el nombre con `_` y
+    # prefijo numérico). Garantiza que ninguna fila quede en blanco.
+    df = df.with_columns(
+        pl.col("original_filename").map_elements(
+            _clean_filename_as_title, return_dtype=pl.Utf8,
+        ).alias("_title_fallback")
+    )
     df = df.with_columns(
         pl.coalesce([
-            "title_extracted",
-            "title_from_filename",
-            pl.col("original_filename").str.replace(r"\.pdf$", "", literal=False),
+            "title_extracted", "title_from_filename", "_title_fallback",
         ]).alias("title")
-    )
+    ).drop("_title_fallback")
     return df
 
 
