@@ -75,6 +75,48 @@ RE_YEAR = re.compile(r"\b(19[89]\d|20[0-2]\d)\b")
 ABSTRACT_GOOD_ENOUGH = 200
 
 
+# ── Validación de título ──────────────────────────────────────── #
+# Placeholders típicos de plantillas (LaTeX, Word) que no son títulos reales.
+TITLE_BLACKLIST = [
+    re.compile(r"^\s*this\s+is\s+(?:a|the|my|your)?\s*(?:sample\s+)?(?:title|paper|template)\s*\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*title\s+(?:goes\s+)?here\s*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:paper|article|document)\s+title\s*$", re.IGNORECASE),
+    re.compile(r"^\s*untitled\s*$", re.IGNORECASE),
+    re.compile(r"^\s*title\s*$", re.IGNORECASE),
+    re.compile(r"^\s*abstract\s*$", re.IGNORECASE),
+]
+
+# Tokens de cabecera de revista / running header: cuando un texto en mayúsculas
+# los contiene casi seguro es el header de la publicación, no el título.
+JOURNAL_HEADER_TOKENS = re.compile(
+    r"\b(?:JOURNAL|PROCEEDINGS|TRANSACTIONS|CONFERENCE|SYMPOSIUM|WORKSHOP|"
+    r"REVIEW|LETTERS|MAGAZINE|BULLETIN|ANNALS|ACTA|ACM|IEEE|IEEE/ACM|"
+    r"SPRINGER|ELSEVIER|VOL\.?|VOLUME|ISSUE|PP\.|PAGES?|ISSN|DOI)\b"
+)
+
+
+def looks_like_title(text: str | None) -> bool:
+    """Heurística de validación: descarta placeholders y running headers."""
+    if not text:
+        return False
+    s = text.strip()
+    if len(s) < 8 or len(s) > 500:
+        return False
+    for pat in TITLE_BLACKLIST:
+        if pat.match(s):
+            return False
+    # Running header: casi todo mayúsculas + token de revista
+    letters = [c for c in s if c.isalpha()]
+    if letters:
+        upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
+        if upper_ratio > 0.85 and JOURNAL_HEADER_TOKENS.search(s):
+            return False
+    # Solo dígitos / símbolos: no es título
+    if not any(c.isalpha() for c in s):
+        return False
+    return True
+
+
 def extract_title_from_page(page) -> str | None:
     try:
         d = page.get_text("dict")
@@ -98,11 +140,19 @@ def extract_title_from_page(page) -> str | None:
     if not candidates:
         return None
     candidates.sort(key=lambda c: (-c[0], c[1]))
-    top_size = candidates[0][0]
-    title_parts = [t for s, _, t in candidates if abs(s - top_size) < 0.5]
-    title = " ".join(title_parts).strip()
-    title = re.sub(r"\s+", " ", title)
-    return title[:500] if len(title) >= 8 else None
+    # Probar tamaños de fuente en orden decreciente — si el más grande es un
+    # running header, caemos al siguiente nivel.
+    seen_sizes: set[float] = set()
+    for size, _, _ in candidates:
+        size_key = round(size * 2) / 2
+        if size_key in seen_sizes:
+            continue
+        seen_sizes.add(size_key)
+        title_parts = [t for s, _, t in candidates if abs(s - size) < 0.5]
+        title = re.sub(r"\s+", " ", " ".join(title_parts)).strip()
+        if looks_like_title(title):
+            return title[:500]
+    return None
 
 
 def extract_abstract(full_text: str) -> str | None:
@@ -245,11 +295,13 @@ def extract_one(code: str, key: str, year_from_arxiv: int | None, s3) -> Extract
                 if abstract and (keywords or i == PDF_BODY_MAX_PAGES - 1):
                     break
 
-        # Fallback título XMP si la heurística falló
+        # Fallback título XMP si la heurística falló — pasa por el mismo validador
+        # para no aceptar placeholders ("Microsoft Word - paper.docx", running headers, etc.)
         if not title:
             xmp_title = (doc.metadata or {}).get("title", "")
-            if xmp_title and 8 <= len(xmp_title) <= 500:
-                title = xmp_title.strip()
+            xmp_title = re.sub(r"\s+", " ", (xmp_title or "")).strip()
+            if looks_like_title(xmp_title):
+                title = xmp_title
 
         # YAKE solo si no hay keywords explícitas Y hay abstract
         keywords_yake_top = []

@@ -220,11 +220,15 @@ def sbert_scores(corpus: list[str], query: str, codes: list[str],
 # Decisión de tier                                               #
 # ─────────────────────────────────────────────────────────────── #
 def decision_for(matches: int, year: int | None) -> str:
-    in_range = (year is not None) and (YEAR_MIN <= year <= YEAR_MAX)
-    if matches >= GOLD_KEYWORD_THRESHOLD and in_range:
-        return "Gold"
+    """Regla única de tier — el filtro temporal (últimos 10 años) corta antes que
+    el score: un paper fuera de rango o sin año no entra siquiera a Silver.
+    """
+    if year is None:
+        return "Descartado (sin año)"
+    if not (YEAR_MIN <= year <= YEAR_MAX):
+        return "Descartado (fuera de rango temporal)"
     if matches >= GOLD_KEYWORD_THRESHOLD:
-        return "Gold fuera de rango temporal"
+        return "Gold"
     return "Silver"
 
 

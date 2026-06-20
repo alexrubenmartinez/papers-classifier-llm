@@ -56,6 +56,11 @@ def run() -> int:
     lines.append("")
     lines.append(f"Generado: {ts}")
     lines.append("")
+    # Papers que entran a Silver = los que pasan el filtro temporal (últimos 10 años).
+    # Los descartados quedan en el parquet interno con decision = "Descartado…".
+    n_in_silver = int(silver["en_rango_temporal"].sum())
+    n_discarded = silver.height - n_in_silver
+
     lines.append("## Resumen ejecutivo")
     lines.append("")
     lines.append(f"- Corpus total: **{silver.height}** papers en Bronze.")
@@ -63,8 +68,9 @@ def run() -> int:
                  f"({silver['title'].is_not_null().sum()*100/max(silver.height,1):.0f}%)")
     lines.append(f"- Papers con abstract: **{silver['abstract'].is_not_null().sum()}**")
     lines.append(f"- Papers con año detectado: **{silver['year'].is_not_null().sum()}**")
-    lines.append(f"- Rango temporal aplicado: **{YEAR_MIN}–{YEAR_MAX}**")
-    lines.append(f"- Papers en rango: **{silver['en_rango_temporal'].sum()}**")
+    lines.append(f"- Rango temporal aplicado: **{YEAR_MIN}–{YEAR_MAX}** (últimos 10 años).")
+    lines.append(f"- Papers que **entran a Silver** (en rango): **{n_in_silver}**")
+    lines.append(f"- Papers **descartados** (sin año o fuera de rango): **{n_discarded}**")
     lines.append(
         f"- Umbral Gold: **score ≥ {GOLD_KEYWORD_THRESHOLD}** "
         f"(score capado a {MAX_SCORE}; lista de {len(KEYWORDS_FLAT)} keywords)."
@@ -116,10 +122,13 @@ def run() -> int:
     lines.append("Pipeline en 3 capas, todas en MinIO bajo el prefijo `" + GROUP_PREFIX + "/`:")
     lines.append("")
     lines.append("1. **Bronze** (inmutable): PDFs originales en `bronze/papers/` + manifiesto (`index.parquet`).")
-    lines.append("2. **Silver**: para cada PDF en bronze: metadata extraída con PyMuPDF (título, abstract, "
-                 "keywords, año), score = `# keywords distintas matched`, y **copia del PDF** a `silver/papers/`.")
-    lines.append(f"3. **Gold**: subconjunto con `score ≥ {GOLD_KEYWORD_THRESHOLD}` y año ∈ "
-                 f"[{YEAR_MIN}, {YEAR_MAX}]; los PDFs se copian a `gold/papers/`.")
+    lines.append("2. **Silver**: metadata extraída con PyMuPDF (título, abstract, keywords, año) + "
+                 f"**filtro temporal** (año ∈ [{YEAR_MIN}, {YEAR_MAX}]). Solo los papers que pasan el "
+                 "filtro se materializan en `silver.csv`/`silver.xlsx` y se copian a `silver/papers/`. "
+                 "Los descartados (sin año o fuera de rango) quedan registrados en el parquet interno "
+                 "con `decision = \"Descartado…\"` para trazabilidad.")
+    lines.append(f"3. **Gold**: subconjunto de Silver con `score ≥ {GOLD_KEYWORD_THRESHOLD}`; "
+                 "los PDFs se copian a `gold/papers/`.")
     lines.append("")
     lines.append("### Score (regla única de tier)")
     lines.append("")
@@ -131,10 +140,13 @@ def run() -> int:
     )
     lines.append("")
     lines.append(
-        f"- **Gold**: `score ≥ {GOLD_KEYWORD_THRESHOLD}` (1..{MAX_SCORE}) y año en rango "
-        f"[{YEAR_MIN}, {YEAR_MAX}] (últimos 10 años, dinámico)."
+        f"- **Descartado**: año desconocido o fuera del rango [{YEAR_MIN}, {YEAR_MAX}] "
+        "(últimos 10 años, dinámico). No entra a Silver."
     )
-    lines.append("- **Silver**: todos los demás.")
+    lines.append(
+        f"- **Gold**: año en rango y `score ≥ {GOLD_KEYWORD_THRESHOLD}` (1..{MAX_SCORE})."
+    )
+    lines.append("- **Silver**: año en rango y `score < " f"{GOLD_KEYWORD_THRESHOLD}`.")
     lines.append("")
     lines.append("Las columnas `tfidf_cosine` y `sbert_cosine` se calculan y persisten "
                  "como métricas auxiliares informativas en el CSV, pero **no intervienen** "

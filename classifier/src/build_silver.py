@@ -16,13 +16,13 @@ from rich.console import Console
 try:
     from classifier.src.config import (
         BUCKET, KEY_SILVER_CSV, KEY_SILVER_FINAL, KEY_SILVER_PAPERS_PREFIX,
-        KEY_SILVER_XLSX, OUTPUTS,
+        KEY_SILVER_XLSX, OUTPUTS, YEAR_MIN, YEAR_MAX,
     )
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from classifier.src.config import (
         BUCKET, KEY_SILVER_CSV, KEY_SILVER_FINAL, KEY_SILVER_PAPERS_PREFIX,
-        KEY_SILVER_XLSX, OUTPUTS,
+        KEY_SILVER_XLSX, OUTPUTS, YEAR_MIN, YEAR_MAX,
     )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -56,8 +56,24 @@ def run(no_xlsx: bool = False, no_copy: bool = False) -> int:
     buf.seek(0)
     df = pl.read_parquet(buf)
 
+    # Filtro temporal duro: papers sin año o fuera de los últimos 10 años no
+    # entran a Silver (ni al CSV/XLSX ni a silver/papers/). Sí quedan en el
+    # parquet interno con decision = "Descartado…" para trazabilidad.
+    total = df.height
+    in_range = df.filter(
+        pl.col("year").is_not_null()
+        & (pl.col("year") >= YEAR_MIN)
+        & (pl.col("year") <= YEAR_MAX)
+    )
+    discarded = total - in_range.height
+    console.print(
+        f"Filtro temporal [{YEAR_MIN}-{YEAR_MAX}]: "
+        f"[green]{in_range.height}[/green] entran a Silver · "
+        f"[yellow]{discarded}[/yellow] descartados (sin año o fuera de rango)"
+    )
+
     df_flat = _flatten_list_cols(
-        df.select([c for c in SILVER_COLUMNS if c in df.columns]).sort("code")
+        in_range.select([c for c in SILVER_COLUMNS if c in in_range.columns]).sort("code")
     )
 
     # CSV — primario
@@ -79,11 +95,11 @@ def run(no_xlsx: bool = False, no_copy: bool = False) -> int:
 
     console.print(f"Filas: [bold]{df_flat.height}[/bold]")
 
-    # Copia de PDFs (bronze/papers/{code}.pdf → silver/papers/{code}.pdf) — TODOS
+    # Copia de PDFs — solo los que pasaron el filtro temporal
     if no_copy:
         console.print("[yellow]Copia de PDFs saltada por --no-copy[/yellow]")
     else:
-        codes = df["code"].to_list()
+        codes = in_range["code"].to_list()
         copy_papers_to_tier(codes, KEY_SILVER_PAPERS_PREFIX, tier_label="silver")
 
     return 0
