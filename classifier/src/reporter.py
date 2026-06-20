@@ -12,7 +12,7 @@ from rich.console import Console
 
 try:
     from classifier.src.config import (
-        BUCKET, GOLD_KEYWORD_THRESHOLD, GROUP_PREFIX,
+        BUCKET, GOLD_KEYWORD_THRESHOLD, SILVER_KEYWORD_THRESHOLD, GROUP_PREFIX,
         KEY_GOLD_PARQUET, KEY_SILVER_FINAL,
         KEY_REPORT_MD, MAX_SCORE, OUTPUTS, YEAR_MIN, YEAR_MAX,
     )
@@ -20,7 +20,7 @@ try:
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from classifier.src.config import (
-        BUCKET, GOLD_KEYWORD_THRESHOLD, GROUP_PREFIX,
+        BUCKET, GOLD_KEYWORD_THRESHOLD, SILVER_KEYWORD_THRESHOLD, GROUP_PREFIX,
         KEY_GOLD_PARQUET, KEY_SILVER_FINAL,
         KEY_REPORT_MD, MAX_SCORE, OUTPUTS, YEAR_MIN, YEAR_MAX,
     )
@@ -56,10 +56,11 @@ def run() -> int:
     lines.append("")
     lines.append(f"Generado: {ts}")
     lines.append("")
-    # Papers que entran a Silver = los que pasan el filtro temporal (últimos 10 años).
-    # Los descartados quedan en el parquet interno con decision = "Descartado…".
-    n_in_silver = int(silver["en_rango_temporal"].sum())
-    n_discarded = silver.height - n_in_silver
+    # Silver = score ≥ SILVER_KEYWORD_THRESHOLD y año en rango. El resto se descarta.
+    decisions = silver["decision"].to_list()
+    n_silver = sum(1 for d in decisions if d == "Silver")
+    n_gold = sum(1 for d in decisions if d == "Gold")
+    n_discarded = sum(1 for d in decisions if d and d.startswith("Descartado"))
 
     lines.append("## Resumen ejecutivo")
     lines.append("")
@@ -69,13 +70,14 @@ def run() -> int:
     lines.append(f"- Papers con abstract: **{silver['abstract'].is_not_null().sum()}**")
     lines.append(f"- Papers con año detectado: **{silver['year'].is_not_null().sum()}**")
     lines.append(f"- Rango temporal aplicado: **{YEAR_MIN}–{YEAR_MAX}** (últimos 10 años).")
-    lines.append(f"- Papers que **entran a Silver** (en rango): **{n_in_silver}**")
-    lines.append(f"- Papers **descartados** (sin año o fuera de rango): **{n_discarded}**")
     lines.append(
-        f"- Umbral Gold: **score ≥ {GOLD_KEYWORD_THRESHOLD}** "
+        f"- Umbrales: Silver = `score ≥ {SILVER_KEYWORD_THRESHOLD}`, "
+        f"Gold = `score ≥ {GOLD_KEYWORD_THRESHOLD}` "
         f"(score capado a {MAX_SCORE}; lista de {len(KEYWORDS_FLAT)} keywords)."
     )
-    lines.append(f"- Papers seleccionados a Gold: **{gold.height}**")
+    lines.append(f"- Papers en **Silver**: **{n_silver}**")
+    lines.append(f"- Papers en **Gold**: **{n_gold}** (también incluidos en Silver)")
+    lines.append(f"- Papers **descartados** (sin año, fuera de rango o score < {SILVER_KEYWORD_THRESHOLD}): **{n_discarded}**")
     lines.append("")
 
     lines.append("## Distribución por score (Silver completo)")
@@ -123,14 +125,16 @@ def run() -> int:
     lines.append("")
     lines.append("1. **Bronze** (inmutable): PDFs originales en `bronze/papers/` + manifiesto (`index.parquet`).")
     lines.append("2. **Silver**: metadata extraída con PyMuPDF (título, abstract, keywords, año) + "
-                 f"**filtro temporal** (año ∈ [{YEAR_MIN}, {YEAR_MAX}]). Solo los papers que pasan el "
-                 "filtro se materializan en `silver.csv`/`silver.xlsx` y se copian a `silver/papers/`. "
-                 "Los descartados (sin año o fuera de rango) quedan registrados en el parquet interno "
-                 "con `decision = \"Descartado…\"` para trazabilidad.")
+                 f"**filtro temporal** (año ∈ [{YEAR_MIN}, {YEAR_MAX}]) + "
+                 f"**filtro por score** (`score ≥ {SILVER_KEYWORD_THRESHOLD}`). "
+                 "Solo los papers que pasan ambos filtros se materializan en "
+                 "`silver.csv`/`silver.xlsx` y se copian a `silver/papers/`. "
+                 "Los descartados (sin año, fuera de rango, o score bajo) quedan registrados en el "
+                 "parquet interno con `decision = \"Descartado…\"` para trazabilidad.")
     lines.append(f"3. **Gold**: subconjunto de Silver con `score ≥ {GOLD_KEYWORD_THRESHOLD}`; "
                  "los PDFs se copian a `gold/papers/`.")
     lines.append("")
-    lines.append("### Score (regla única de tier)")
+    lines.append("### Score (regla de tier)")
     lines.append("")
     lines.append(
         f"Para cada paper se cuenta cuántas de las **{len(KEYWORDS_FLAT)} keywords** "
@@ -140,13 +144,15 @@ def run() -> int:
     )
     lines.append("")
     lines.append(
-        f"- **Descartado**: año desconocido o fuera del rango [{YEAR_MIN}, {YEAR_MAX}] "
-        "(últimos 10 años, dinámico). No entra a Silver."
+        f"- **Descartado**: año desconocido, fuera del rango [{YEAR_MIN}, {YEAR_MAX}] "
+        f"(últimos 10 años, dinámico), o `score < {SILVER_KEYWORD_THRESHOLD}`."
+    )
+    lines.append(
+        f"- **Silver**: año en rango y `{SILVER_KEYWORD_THRESHOLD} ≤ score < {GOLD_KEYWORD_THRESHOLD}`."
     )
     lines.append(
         f"- **Gold**: año en rango y `score ≥ {GOLD_KEYWORD_THRESHOLD}` (1..{MAX_SCORE})."
     )
-    lines.append("- **Silver**: año en rango y `score < " f"{GOLD_KEYWORD_THRESHOLD}`.")
     lines.append("")
     lines.append("Las columnas `tfidf_cosine` y `sbert_cosine` se calculan y persisten "
                  "como métricas auxiliares informativas en el CSV, pero **no intervienen** "

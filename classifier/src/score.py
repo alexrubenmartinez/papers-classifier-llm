@@ -34,7 +34,8 @@ from rich.table import Table
 
 try:
     from classifier.src.config import (
-        BUCKET, GOLD_KEYWORD_THRESHOLD, KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
+        BUCKET, GOLD_KEYWORD_THRESHOLD, SILVER_KEYWORD_THRESHOLD,
+        KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
         KEY_SILVER_FINAL, KEY_SILVER_EMBEDDINGS,
         MAX_SCORE, OUTPUTS, SBERT_MODEL,
         YEAR_MIN, YEAR_MAX,
@@ -43,7 +44,8 @@ try:
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from classifier.src.config import (
-        BUCKET, GOLD_KEYWORD_THRESHOLD, KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
+        BUCKET, GOLD_KEYWORD_THRESHOLD, SILVER_KEYWORD_THRESHOLD,
+        KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
         KEY_SILVER_FINAL, KEY_SILVER_EMBEDDINGS,
         MAX_SCORE, OUTPUTS, SBERT_MODEL,
         YEAR_MIN, YEAR_MAX,
@@ -220,13 +222,18 @@ def sbert_scores(corpus: list[str], query: str, codes: list[str],
 # Decisión de tier                                               #
 # ─────────────────────────────────────────────────────────────── #
 def decision_for(matches: int, year: int | None) -> str:
-    """Regla única de tier — el filtro temporal (últimos 10 años) corta antes que
-    el score: un paper fuera de rango o sin año no entra siquiera a Silver.
+    """Regla de tier — filtros aplicados en cascada:
+    1) sin año o fuera de rango → Descartado
+    2) score < SILVER_KEYWORD_THRESHOLD → Descartado (score bajo)
+    3) score ≥ GOLD_KEYWORD_THRESHOLD → Gold
+    4) en otro caso (≥ Silver, < Gold) → Silver
     """
     if year is None:
         return "Descartado (sin año)"
     if not (YEAR_MIN <= year <= YEAR_MAX):
         return "Descartado (fuera de rango temporal)"
+    if matches < SILVER_KEYWORD_THRESHOLD:
+        return "Descartado (score bajo)"
     if matches >= GOLD_KEYWORD_THRESHOLD:
         return "Gold"
     return "Silver"

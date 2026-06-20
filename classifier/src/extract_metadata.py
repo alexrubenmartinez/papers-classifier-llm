@@ -86,13 +86,46 @@ TITLE_BLACKLIST = [
     re.compile(r"^\s*abstract\s*$", re.IGNORECASE),
 ]
 
-# Tokens de cabecera de revista / running header: cuando un texto en mayúsculas
-# los contiene casi seguro es el header de la publicación, no el título.
+# Tokens de cabecera de revista / running header — versión all-caps (estricta,
+# para detectar "INTERNATIONAL JOURNAL OF…" como header solitario).
 JOURNAL_HEADER_TOKENS = re.compile(
     r"\b(?:JOURNAL|PROCEEDINGS|TRANSACTIONS|CONFERENCE|SYMPOSIUM|WORKSHOP|"
     r"REVIEW|LETTERS|MAGAZINE|BULLETIN|ANNALS|ACTA|ACM|IEEE|IEEE/ACM|"
     r"SPRINGER|ELSEVIER|VOL\.?|VOLUME|ISSUE|PP\.|PAGES?|ISSN|DOI)\b"
 )
+
+# Prefijo de nombre de revista — case-insensitive, captura "Transactions on …",
+# "Journal of …", "IEEE Transactions on …", etc. cuando aparecen al INICIO del
+# texto extraído como título. Si va seguido de un separador (underscores, dashes
+# o muchos espacios), el título real está después del separador.
+JOURNAL_NAME_PREFIX = re.compile(
+    r"^\s*(?:(?:IEEE|ACM|IEEE/ACM|Springer|Elsevier|International)\s+)*"
+    r"(?:Journal|Proceedings|Transactions|Conference|Symposium|Workshop|"
+    r"Review|Letters|Magazine|Bulletin|Annals|Acta)"
+    r"(?:\s+(?:on|of|in|for)\b[^_\-\n]{0,120})?",
+    re.IGNORECASE,
+)
+
+# Separador típico entre header de revista y título: ≥3 underscores/guiones
+# o ≥6 espacios consecutivos.
+TITLE_SEPARATOR = re.compile(r"(?:_{3,}|-{4,}|\s{6,})")
+
+
+def strip_journal_header(text: str) -> str:
+    """Si el texto empieza con un nombre de revista y hay un separador, devuelve
+    la parte después del separador (el título real). Si no, devuelve el texto tal cual."""
+    if not text:
+        return text
+    m = JOURNAL_NAME_PREFIX.match(text)
+    if not m:
+        return text
+    sep = TITLE_SEPARATOR.search(text, m.end())
+    if not sep:
+        # Empieza con nombre de revista PERO no hay separador → puede ser el
+        # header solo (sin título adelante). Lo dejamos para que looks_like_title decida.
+        return text
+    after = text[sep.end():].strip()
+    return after or text
 
 
 def looks_like_title(text: str | None) -> bool:
@@ -105,12 +138,17 @@ def looks_like_title(text: str | None) -> bool:
     for pat in TITLE_BLACKLIST:
         if pat.match(s):
             return False
-    # Running header: casi todo mayúsculas + token de revista
+    # Running header all-caps + token de revista (caso "INTERNATIONAL JOURNAL OF").
     letters = [c for c in s if c.isalpha()]
     if letters:
         upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
         if upper_ratio > 0.85 and JOURNAL_HEADER_TOKENS.search(s):
             return False
+    # Running header NO-all-caps tipo "Transactions on Sustainable …" sin separador
+    # → es solo el cabezote. Si hubiera separador, strip_journal_header ya lo cortó
+    # antes de llegar acá.
+    if JOURNAL_NAME_PREFIX.match(s) and not TITLE_SEPARATOR.search(s):
+        return False
     # Solo dígitos / símbolos: no es título
     if not any(c.isalpha() for c in s):
         return False
@@ -149,7 +187,11 @@ def extract_title_from_page(page) -> str | None:
             continue
         seen_sizes.add(size_key)
         title_parts = [t for s, _, t in candidates if abs(s - size) < 0.5]
-        title = re.sub(r"\s+", " ", " ".join(title_parts)).strip()
+        title = " ".join(title_parts).strip()
+        # Antes del collapse de whitespace probamos a cortar por separador (los
+        # `___` o múltiples espacios desaparecen al colapsar).
+        title = strip_journal_header(title)
+        title = re.sub(r"\s+", " ", title).strip()
         if looks_like_title(title):
             return title[:500]
     return None
@@ -295,11 +337,12 @@ def extract_one(code: str, key: str, year_from_arxiv: int | None, s3) -> Extract
                 if abstract and (keywords or i == PDF_BODY_MAX_PAGES - 1):
                     break
 
-        # Fallback título XMP si la heurística falló — pasa por el mismo validador
-        # para no aceptar placeholders ("Microsoft Word - paper.docx", running headers, etc.)
+        # Fallback título XMP si la heurística falló — pasa por strip_journal_header
+        # y el mismo validador para no aceptar placeholders ni running headers.
         if not title:
             xmp_title = (doc.metadata or {}).get("title", "")
-            xmp_title = re.sub(r"\s+", " ", (xmp_title or "")).strip()
+            xmp_title = strip_journal_header(xmp_title or "")
+            xmp_title = re.sub(r"\s+", " ", xmp_title).strip()
             if looks_like_title(xmp_title):
                 title = xmp_title
 

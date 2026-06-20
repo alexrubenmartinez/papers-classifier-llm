@@ -53,11 +53,14 @@ KEY_GOLD_RANKING_XLSX = f"{PFX_GOLD}/ranking.xlsx"
 KEY_REPORT_MD = f"{PFX_REPORTS}/report.md"
 
 
-# ───── Regla de tier (única regla que decide Gold) ───── #
+# ───── Regla de tier ───── #
 # El score de cada paper es el conteo de keywords distintas de KEYWORDS_FLAT que
 # aparecen en title ∪ keywords ∪ abstract, capado a MAX_SCORE.
-# Gold = score ≥ GOLD_KEYWORD_THRESHOLD y año en rango.
+# - Gold:     score ≥ GOLD_KEYWORD_THRESHOLD y año en rango.
+# - Silver:   SILVER_KEYWORD_THRESHOLD ≤ score < GOLD_KEYWORD_THRESHOLD y año en rango.
+# - Descartado: score < SILVER_KEYWORD_THRESHOLD, o sin año, o fuera de rango.
 GOLD_KEYWORD_THRESHOLD = 4
+SILVER_KEYWORD_THRESHOLD = 3
 MAX_SCORE = 5
 
 
