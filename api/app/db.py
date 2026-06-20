@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timezone
 
 from minio import Minio
+from minio.commonconfig import CopySource
 from minio.error import S3Error
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
@@ -76,6 +77,51 @@ def get_pdf(minio_key: str) -> bytes:
     finally:
         resp.close()
         resp.release_conn()
+
+
+def tier_for_score(score: int) -> str:
+    """Mapea score (0-5) a nombre del folder del tier."""
+    if score == 0:
+        return "out_of_range"
+    if score >= 4:
+        return "gold"
+    if score == 3:
+        return "silver"
+    return "bronze"
+
+
+def tier_key(paper_id: str, score: int) -> str:
+    """Devuelve la key MinIO en la que vive (o vivira) el PDF para ese tier."""
+    return f"examen-api/{tier_for_score(score)}/{paper_id}.pdf"
+
+
+def copy_to_tier(paper_id: str, src_key: str, score: int) -> str:
+    """Copia (server-side) el PDF desde src_key al folder del tier. Devuelve la
+    nueva key. Si la copia ya existe, sobrescribe sin error."""
+    client = get_minio()
+    dst = tier_key(paper_id, score)
+    client.copy_object(
+        MINIO_BUCKET,
+        dst,
+        CopySource(MINIO_BUCKET, src_key),
+    )
+    return dst
+
+
+def remove_object(key: str) -> None:
+    """Borra un objeto. Idempotente: si no existe, ignora el error."""
+    client = get_minio()
+    try:
+        client.remove_object(MINIO_BUCKET, key)
+    except S3Error:
+        pass
+
+
+def list_objects(prefix: str) -> list[str]:
+    """Lista keys con un prefijo dado. Util para batch import."""
+    client = get_minio()
+    return [obj.object_name for obj in client.list_objects(MINIO_BUCKET, prefix=prefix, recursive=True)
+            if obj.object_name and obj.object_name.lower().endswith(".pdf")]
 
 
 SEED_PAPERS: list[dict] = [

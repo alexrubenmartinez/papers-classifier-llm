@@ -90,7 +90,16 @@ def _looks_like_title(line: str) -> bool:
 _TITLE_END_RE = re.compile(
     r"^(abstract|introduction|keywords|index terms|1\.\s|i\.\s|chapter\s|"
     r"author|contents|table of contents|copyright|received|accepted|published|"
-    r"published online|email|e-mail|@)",
+    r"published online|email|e-mail|@|school of|department of|"
+    r"university of|institute of|faculty of|laboratory|"
+    r"\d+\s*$)",  # numero solo (page number / footnote)
+    re.IGNORECASE,
+)
+
+# Marcadores que indican "ya entramos al bloque de autores" — cortar el titulo aca.
+_TITLE_INLINE_AUTHOR_RE = re.compile(
+    r"(@[\w.-]+\.[a-z]{2,}|\bschool of\b|\bdepartment of\b|\buniversity of\b|"
+    r"\binstitute of\b|\bfaculty of\b|\blaboratory\b)",
     re.IGNORECASE,
 )
 
@@ -142,7 +151,12 @@ def _pick_title(metadata_title: str, full_text: str) -> str:
             break
 
     if parts:
-        return " ".join(parts)[:300]
+        title = " ".join(parts)
+        # Cortar inline si una linea contiene email o marker academico (autor/institucion).
+        m = _TITLE_INLINE_AUTHOR_RE.search(title)
+        if m:
+            title = title[: m.start()].rstrip(" -–—,·*⋆")
+        return title[:300]
 
     for raw in lines:
         s = raw.strip()

@@ -1,6 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { PapersService } from '../../core/api/papers.service';
 import { PaperSummary, Tier, scoreToTier } from '../../core/models';
 import { DecisionPillComponent } from '../../shared/ui/decision-pill.component';
@@ -21,7 +21,8 @@ import { ScoreBadgeComponent } from '../../shared/ui/score-badge.component';
       <div class="glass rounded-3xl p-5 flex flex-wrap items-center gap-4">
         <div class="flex items-center gap-2">
           <label class="font-mono text-[10px] uppercase tracking-wider text-ink-3">tier</label>
-          <select [(ngModel)]="tierFilter" class="bg-paper-2 border border-line-2 rounded-full px-3 py-1.5 text-[12px] font-mono">
+          <select [ngModel]="tierFilter()" (ngModelChange)="setTier($event)"
+                  class="bg-paper-2 border border-line-2 rounded-full px-3 py-1.5 text-[12px] font-mono">
             <option value="all">todos</option>
             <option value="gold">Gold</option>
             <option value="silver">Silver</option>
@@ -31,7 +32,7 @@ import { ScoreBadgeComponent } from '../../shared/ui/score-badge.component';
         </div>
         <div class="flex items-center gap-2 flex-1 min-w-[200px]">
           <label class="font-mono text-[10px] uppercase tracking-wider text-ink-3">buscar</label>
-          <input type="text" [(ngModel)]="search" placeholder="título o paper_id…"
+          <input type="text" [ngModel]="search()" (ngModelChange)="search.set($event)" placeholder="título o paper_id…"
                  class="flex-1 bg-paper-2 border border-line-2 rounded-full px-4 py-1.5 text-[13px]">
         </div>
         <span class="font-mono text-[11px] tabular-nums text-ink-3">{{ filtered().length }} / {{ papers().length }}</span>
@@ -73,6 +74,8 @@ import { ScoreBadgeComponent } from '../../shared/ui/score-badge.component';
 })
 export class PapersListPage implements OnInit {
   private papersSvc = inject(PapersService);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
 
   papers = signal<PaperSummary[]>([]);
   tierFilter = signal<Tier | 'all'>('all');
@@ -89,6 +92,20 @@ export class PapersListPage implements OnInit {
   });
 
   ngOnInit() {
-    this.papersSvc.list(2000, 0).subscribe((p) => this.papers.set(p));
+    // Inicializar tier desde query param ?tier=gold|silver|bronze|out_of_range
+    this.route.queryParamMap.subscribe((q) => {
+      const t = q.get('tier');
+      if (t === 'gold' || t === 'silver' || t === 'bronze' || t === 'out_of_range' || t === 'all') {
+        this.tierFilter.set(t);
+      }
+    });
+    this.papersSvc.list(5000, 0).subscribe((p) => this.papers.set(p));
+  }
+
+  setTier(t: Tier | 'all') {
+    this.tierFilter.set(t);
+    // Sincronizar el query param para que el URL sea bookmarkeable.
+    const queryParams = t === 'all' ? { tier: null } : { tier: t };
+    this.router.navigate([], { relativeTo: this.route, queryParams, queryParamsHandling: 'merge' });
   }
 }

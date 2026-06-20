@@ -46,7 +46,7 @@ import { TierCardComponent } from './tier-card.component';
           description="Papers fuertemente alineados al tema activo. Recomendados para revisión profunda."
           color="text-jade"
           barColor="bg-jade"
-          link="/papers"
+          link="/papers?tier=gold"
         />
         <app-tier-card
           label="Silver"
@@ -56,7 +56,7 @@ import { TierCardComponent } from './tier-card.component';
           description="Match parcial. Requieren lectura humana para decidir si entran al corpus final."
           color="text-ink"
           barColor="bg-ink-3"
-          link="/papers"
+          link="/papers?tier=silver"
         />
         <app-tier-card
           label="Bronze"
@@ -66,7 +66,7 @@ import { TierCardComponent } from './tier-card.component';
           description="Match débil o nulo. Descartables salvo cambio de tema."
           color="text-ember"
           barColor="bg-ember"
-          link="/papers"
+          link="/papers?tier=bronze"
         />
       </div>
 

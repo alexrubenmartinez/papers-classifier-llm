@@ -1,4 +1,4 @@
-import { Component, DestroyRef, OnInit, computed, inject, input, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, effect, inject, input, output, signal } from '@angular/core';
 import { JobStatus } from '../../core/models';
 import { SseHandle, SseService } from '../../core/sse/sse.service';
 
@@ -50,6 +50,16 @@ export class JobProgressComponent implements OnInit {
   // observe reactivamente y se actualice cuando llega.
   private handle = signal<SseHandle<JobStatus> | null>(null);
   state = computed<JobStatus | null>(() => this.handle()?.state() ?? null);
+
+  /** Emite cada actualizacion del SSE. El padre puede sincronizar su snapshot local. */
+  statusChange = output<JobStatus>();
+
+  constructor() {
+    effect(() => {
+      const s = this.state();
+      if (s) this.statusChange.emit(s);
+    });
+  }
 
   ngOnInit() {
     const h = this.sse.streamJob(this.jobId());

@@ -23,6 +23,8 @@ class Paper(PaperSummary):
     score_breakdown: ScoreBreakdown
     justification: str | None = None
     created_at: str
+    minio_key: str | None = None
+    tier_minio_key: str | None = None
 
 
 class UploadResponse(BaseModel):
@@ -87,6 +89,20 @@ class QueryConfigUpdate(BaseModel):
 class ReclassifyResponse(BaseModel):
     job_id: str
     type: Literal["reclassify_all"]
+    total: int
+    stream_url: str
+
+
+class ImportRequest(BaseModel):
+    """Body de POST /papers/import. Recorre un prefijo de MinIO e ingesta cada PDF."""
+    source_prefix: str = Field(..., description="Prefijo del bucket. Ej: 'grupo3_ciberseguridad/bronze/papers/'")
+    justify: Literal["none", "lazy", "auto"] = "none"
+    limit: int | None = Field(None, ge=1, le=5000, description="Si se da, importa solo los primeros N PDFs del prefijo.")
+
+
+class ImportResponse(BaseModel):
+    job_id: str
+    type: Literal["import_batch"]
     total: int
     stream_url: str
 

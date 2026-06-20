@@ -18,6 +18,15 @@ import { CostWarningComponent, formatDuration } from '../../shared/ui/cost-warni
         <p class="text-ink-2 mt-2 text-[14px]">Cambiar la query, los ejes, los pesos o los umbrales reordena por completo la clasificación del corpus.</p>
       </header>
 
+      @if (isDirty()) {
+        <div class="rounded-2xl border border-ember/40 bg-ember/10 px-4 py-3 flex items-center gap-3">
+          <span class="w-2 h-2 rounded-full bg-ember inline-block animate-pulse"></span>
+          <p class="text-[13px] text-ink">
+            Hay cambios sin guardar. El ranking actual sigue reflejando la configuración previa.
+          </p>
+        </div>
+      }
+
       @if (form(); as f) {
         <div class="glass rounded-3xl p-6 sm:p-8 space-y-5">
           <div>
@@ -117,9 +126,17 @@ export class ConfigPage implements OnInit {
   private router = inject(Router);
 
   form = signal<QueryConfig | null>(null);
+  /** Snapshot del config como vino del backend; sirve para detectar cambios. */
+  initial = signal<string>('');
   saving = signal(false);
   askingCost = signal(false);
   papersCount = signal(0);
+
+  isDirty = computed(() => {
+    const f = this.form();
+    if (!f) return false;
+    return JSON.stringify(f) !== this.initial();
+  });
 
   thresholdKeys = () => ['gold_muy', 'gold_claro', 'revisar', 'no_prioritario'];
   axisKeys = computed(() => Object.keys(this.form()?.axes || {}));
@@ -128,7 +145,11 @@ export class ConfigPage implements OnInit {
   costMessage = computed(() => `Reclasifica el corpus completo con la nueva query. Solo recalcula scores (no toca embeddings).`);
 
   ngOnInit() {
-    this.configSvc.get().subscribe((c) => this.form.set({ ...c, thresholds: c.thresholds ?? {} }));
+    this.configSvc.get().subscribe((c) => {
+      const loaded = { ...c, thresholds: c.thresholds ?? {} };
+      this.form.set(loaded);
+      this.initial.set(JSON.stringify(loaded));
+    });
     this.healthSvc.health().subscribe((h) => this.papersCount.set(h.papers));
   }
 
@@ -163,8 +184,12 @@ export class ConfigPage implements OnInit {
       thresholds: f.thresholds || undefined,
     };
     this.configSvc.update(body, reclassify).subscribe({
-      next: () => {
+      next: (updated) => {
         this.saving.set(false);
+        // Reset del snapshot: ahora el form coincide con lo guardado.
+        const refreshed = { ...updated, thresholds: updated.thresholds ?? {} };
+        this.form.set(refreshed);
+        this.initial.set(JSON.stringify(refreshed));
         if (reclassify) this.router.navigate(['/jobs']);
       },
       error: () => this.saving.set(false),

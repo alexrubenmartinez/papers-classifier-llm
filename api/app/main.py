@@ -11,17 +11,24 @@ from sse_starlette.sse import EventSourceResponse
 
 from app import pipeline, repos
 from app.db import (
+    copy_to_tier,
     ensure_bucket,
     get_pdf,
     init_indices,
+    list_objects,
     put_pdf,
+    remove_object,
     seed_config_if_empty,
     seed_if_empty,
+    tier_for_score,
+    tier_key,
     upsert_seeds,
 )
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    ImportRequest,
+    ImportResponse,
     JobStatus,
     JustifyBatchResponse,
     JustifyRequest,
@@ -411,7 +418,14 @@ async def _run_pipeline_real(job_id: str, paper_id: str, minio_key: str, justify
             breakdown["weighted"], meta["year"], cfg["year_range"], cfg.get("thresholds"),
         )
 
-        # 4) Persist paper.
+        # 4) Copy PDF al folder del tier (gold/silver/bronze/out_of_range).
+        tier_minio_key: str | None = None
+        try:
+            tier_minio_key = copy_to_tier(paper_id, minio_key, score)
+        except Exception as exc:
+            print(f"[tier copy] {paper_id} fallo: {type(exc).__name__}: {exc}")
+
+        # 5) Persist paper.
         paper_doc = {
             "paper_id": paper_id,
             "title": meta["title"],
@@ -424,6 +438,7 @@ async def _run_pipeline_real(job_id: str, paper_id: str, minio_key: str, justify
             "decision": decision,
             "justification": None,
             "minio_key": minio_key,
+            "tier_minio_key": tier_minio_key,
             "created_at": _now_iso(),
         }
         await repos.insert_paper(paper_doc)
@@ -515,11 +530,28 @@ async def _run_reclassify(job_id: str, reextract: bool = False, justify_mode: st
             score, decision = pipeline.score_to_decision(
                 breakdown["weighted"], paper.get("year", 2024), cfg["year_range"], cfg.get("thresholds"),
             )
-            await repos.update_paper(paper["paper_id"], {
+
+            # Copiar/mover al folder del tier (solo papers con minio_key).
+            # Copia siempre que: (a) el paper no tenga tier_minio_key aun, o
+            #                    (b) el tier nuevo difiera del actual.
+            update_fields: dict = {
                 "score_breakdown": breakdown,
                 "score_final": score,
                 "decision": decision,
-            })
+            }
+            mk = paper.get("minio_key")
+            old_tier_key = paper.get("tier_minio_key")
+            expected_tier_key = tier_key(paper["paper_id"], score) if mk else None
+            if mk and expected_tier_key != old_tier_key:
+                try:
+                    new_tier_key = copy_to_tier(paper["paper_id"], mk, score)
+                    if old_tier_key and old_tier_key != new_tier_key:
+                        remove_object(old_tier_key)
+                    update_fields["tier_minio_key"] = new_tier_key
+                except Exception as exc:
+                    print(f"[tier move] {paper['paper_id']} fallo: {type(exc).__name__}: {exc}")
+
+            await repos.update_paper(paper["paper_id"], update_fields)
 
             await repos.update_job(job_id, {
                 "stage": f"{i}/{total}",
@@ -543,6 +575,107 @@ async def _run_reclassify(job_id: str, reextract: bool = False, justify_mode: st
                 except Exception as exc:
                     print(f"[justify {justify_mode}] {paper['paper_id']} fallo: {type(exc).__name__}: {exc}")
                 await repos.update_job(job_id, {"stage": f"justify {j}/{n}", "status": "running"})
+
+        await repos.update_job(job_id, {"status": "completed", "stage": f"{total}/{total}"})
+    except Exception as exc:
+        await repos.update_job(job_id, {"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
+
+
+# ---------------------------------------------------------------------------
+# Import batch desde MinIO
+# ---------------------------------------------------------------------------
+
+
+@app.post("/papers/import", response_model=ImportResponse, status_code=202)
+async def import_papers_endpoint(body: ImportRequest) -> ImportResponse:
+    """Importa todos los PDFs bajo un prefijo del bucket. Cada PDF se copia a
+    `examen-api/uploads/PAPER_X.pdf` con un paper_id nuevo y se pasa por el
+    pipeline real (extract + embed + score + tier copy)."""
+    try:
+        keys = list_objects(body.source_prefix)
+    except Exception as exc:
+        raise HTTPException(500, f"No se pudo listar el prefix: {exc}") from exc
+    if not keys:
+        raise HTTPException(404, f"No se encontraron PDFs bajo '{body.source_prefix}'")
+    if body.limit:
+        keys = keys[: body.limit]
+
+    job_id = str(uuid.uuid4())
+    total = len(keys)
+    job = {
+        "job_id": job_id,
+        "paper_id": "ALL",
+        "type": "import_batch",
+        "status": "queued",
+        "stage": f"0/{total}",
+        "filename": None,
+        "size_bytes": 0,
+        "minio_key": None,
+        "total": total,
+        "processed": 0,
+        "source_prefix": body.source_prefix,
+        "justify_mode": body.justify,
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+        "error": None,
+    }
+    await repos.insert_job(job)
+    asyncio.create_task(_run_import_batch(job_id, keys, body.justify))
+    return ImportResponse(
+        job_id=job_id,
+        type="import_batch",
+        total=total,
+        stream_url=f"/stream?job_id={job_id}",
+    )
+
+
+async def _run_import_batch(job_id: str, source_keys: list[str], justify_mode: str) -> None:
+    """Itera keys del bucket, copia cada PDF a examen-api/uploads/ y dispara
+    el pipeline real. Errores individuales no abortan el batch."""
+    from app.db import MINIO_BUCKET, MINIO_PREFIX, get_minio  # local import para mantener el namespace
+    from minio.commonconfig import CopySource
+
+    client = get_minio()
+    total = len(source_keys)
+    try:
+        for i, src_key in enumerate(source_keys, start=1):
+            try:
+                paper_id = await repos.next_paper_id()
+                dst_key = f"{MINIO_PREFIX}/{paper_id}.pdf"
+                # Copy server-side (no transfiere bytes al cliente).
+                client.copy_object(MINIO_BUCKET, dst_key, CopySource(MINIO_BUCKET, src_key))
+
+                # Crear job hijo de tipo ingest y lanzar pipeline. NO esperamos:
+                # el SSE del job batch ya muestra X/N, no necesitamos progreso
+                # per-paper acá.
+                child_job_id = str(uuid.uuid4())
+                await repos.insert_job({
+                    "job_id": child_job_id,
+                    "paper_id": paper_id,
+                    "type": "ingest",
+                    "status": "queued",
+                    "stage": "queued",
+                    "filename": src_key.rsplit("/", 1)[-1],
+                    "size_bytes": 0,
+                    "minio_key": dst_key,
+                    "imported_from": src_key,
+                    "justify_mode": justify_mode,
+                    "created_at": _now_iso(),
+                    "updated_at": _now_iso(),
+                    "error": None,
+                })
+                # await sequencial para no saturar SBERT con N tasks paralelas
+                # (el modelo es CPU-bound; paralelismo no ayuda en CPU).
+                await _run_pipeline_real(child_job_id, paper_id, dst_key, justify_mode=justify_mode)
+            except Exception as exc:
+                print(f"[import] {src_key} fallo: {type(exc).__name__}: {exc}")
+
+            await repos.update_job(job_id, {
+                "stage": f"{i}/{total}",
+                "status": "running",
+                "processed": i,
+                "total": total,
+            })
 
         await repos.update_job(job_id, {"status": "completed", "stage": f"{total}/{total}"})
     except Exception as exc:

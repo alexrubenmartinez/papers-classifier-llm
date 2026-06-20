@@ -6,7 +6,7 @@ import { RouterLink } from '@angular/router';
   selector: 'app-tier-card',
   imports: [RouterLink],
   template: `
-    <a [routerLink]="link()" class="block group">
+    <a [routerLink]="['/papers']" [queryParams]="queryParamsFromLink()" class="block group">
       <div class="glass rounded-3xl p-6 sm:p-8 transition-transform duration-500 ease-spring group-hover:-translate-y-1 h-full">
         <div class="flex items-baseline justify-between mb-4">
           <span class="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-3">{{ label() }}</span>
@@ -42,4 +42,17 @@ export class TierCardComponent {
     const t = this.total();
     return t > 0 ? Math.round((this.count() / t) * 1000) / 10 : 0;
   };
+
+  queryParamsFromLink(): Record<string, string> {
+    // Extrae el query string del input `link` (ej. "/papers?tier=gold" → { tier: 'gold' })
+    const url = this.link();
+    const qIdx = url.indexOf('?');
+    if (qIdx < 0) return {};
+    const out: Record<string, string> = {};
+    for (const pair of url.slice(qIdx + 1).split('&')) {
+      const [k, v] = pair.split('=');
+      if (k && v !== undefined) out[decodeURIComponent(k)] = decodeURIComponent(v);
+    }
+    return out;
+  }
 }
