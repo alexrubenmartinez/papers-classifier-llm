@@ -1,10 +1,17 @@
-"""Fase 3 — Scoring híbrido: keyword + TF-IDF + Sentence-BERT.
+"""Fase 3 — Scoring por conteo de keywords distintas.
 
-Combina las 3 señales en un score raw [0,1], mapea a 1-5 por percentiles,
-aplica filtro temporal y produce la justificación textual.
+Regla única de tier:
+    score = # de keywords distintas de KEYWORDS_FLAT que aparecen
+            en title ∪ keywords ∪ abstract (case-insensitive, normalizado).
+    decision = Gold si score ≥ GOLD_KEYWORD_THRESHOLD y año en rango;
+               Silver en caso contrario.
 
-Salidas en s3://examen-parcial-silver-g3/:
-- silver.parquet           (todo el corpus con score, decisión, justificación)
+TF-IDF y SBERT siguen calculándose y persistiéndose en silver como columnas
+informativas (tfidf_cosine, sbert_cosine) para análisis posterior, pero NO
+intervienen en la decisión de tier.
+
+Salidas en MinIO:
+- silver.parquet           (corpus con score, decision, justificación, métricas aux)
 - embeddings.npy           (cache de SBERT — para recalibrar sin recomputar)
 """
 from __future__ import annotations
@@ -27,29 +34,21 @@ from rich.table import Table
 
 try:
     from classifier.src.config import (
-        BUCKET, KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
+        BUCKET, GOLD_KEYWORD_THRESHOLD, KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
         KEY_SILVER_FINAL, KEY_SILVER_EMBEDDINGS,
         OUTPUTS, SBERT_MODEL,
-        SCORE_BUCKETS, SECTION_WEIGHTS,
-        W_KEYWORD, W_TFIDF, W_SBERT,
         YEAR_MIN, YEAR_MAX,
     )
-    from classifier.search_query import (
-        ALL_KEYWORDS, KEYWORDS_BY_AXIS, query_as_natural_text,
-    )
+    from classifier.search_query import KEYWORDS_FLAT, query_as_natural_text
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from classifier.src.config import (
-        BUCKET, KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
+        BUCKET, GOLD_KEYWORD_THRESHOLD, KEY_BRONZE_INDEX, KEY_SILVER_METADATA,
         KEY_SILVER_FINAL, KEY_SILVER_EMBEDDINGS,
         OUTPUTS, SBERT_MODEL,
-        SCORE_BUCKETS, SECTION_WEIGHTS,
-        W_KEYWORD, W_TFIDF, W_SBERT,
         YEAR_MIN, YEAR_MAX,
     )
-    from classifier.search_query import (
-        ALL_KEYWORDS, KEYWORDS_BY_AXIS, query_as_natural_text,
-    )
+    from classifier.search_query import KEYWORDS_FLAT, query_as_natural_text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from classifier.src._minio_client import minio  # noqa: E402
@@ -62,13 +61,11 @@ console = Console()
 # ─────────────────────────────────────────────────────────────── #
 def load_inputs() -> pl.DataFrame:
     s3 = minio()
-    # bronze
     buf = io.BytesIO()
     s3.download_fileobj(BUCKET, KEY_BRONZE_INDEX, buf)
     buf.seek(0)
     bronze = pl.read_parquet(buf)
 
-    # silver metadata
     buf = io.BytesIO()
     s3.download_fileobj(BUCKET, KEY_SILVER_METADATA, buf)
     buf.seek(0)
@@ -78,7 +75,6 @@ def load_inputs() -> pl.DataFrame:
                    "topic_tag_local", "title_from_filename", "size_bytes"]
     df = bronze.select(cols_bronze).join(meta, on="code", how="left")
 
-    # Año final con prioridad: extracted (high) > arxiv > extracted (medium/low)
     df = df.with_columns(
         pl.when(pl.col("year_confidence") == "high")
           .then(pl.col("year_extracted"))
@@ -88,7 +84,6 @@ def load_inputs() -> pl.DataFrame:
           .alias("year")
     )
 
-    # Título final: prioridad al extraído del PDF, fallback al del filename
     df = df.with_columns(
         pl.coalesce(["title_extracted", "title_from_filename"]).alias("title")
     )
@@ -96,7 +91,7 @@ def load_inputs() -> pl.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────── #
-# Capa 1 — Keyword score                                         #
+# Capa única — Keyword score = # keywords distintas matched      #
 # ─────────────────────────────────────────────────────────────── #
 def normalize_text(s: str | None) -> str:
     if not s:
@@ -107,47 +102,29 @@ def normalize_text(s: str | None) -> str:
     return s
 
 
+_KEYWORDS_NORMALIZED: list[tuple[str, str]] = [
+    (kw, normalize_text(kw)) for kw in KEYWORDS_FLAT
+]
+
+
 def keyword_score_row(title: str | None, abstract: str | None,
-                      keywords: list[str] | None,
-                      topic_tag: str | None) -> tuple[float, list[str], dict]:
-    t = normalize_text(title)
-    a = normalize_text(abstract)
-    kw_text = normalize_text(" ".join(keywords or []))
-    topic = normalize_text(topic_tag)
+                      keywords: list[str] | None) -> tuple[int, list[str]]:
+    """Cuenta cuántas keywords distintas de KEYWORDS_FLAT aparecen en el texto.
 
-    matched: dict[str, list[str]] = {axis: [] for axis in KEYWORDS_BY_AXIS}
-    score = 0.0
-    for axis, kws in KEYWORDS_BY_AXIS.items():
-        for kw in kws:
-            kw_n = normalize_text(kw)
-            in_title = kw_n in t
-            in_abstract = kw_n in a
-            in_kw = kw_n in kw_text
-            if in_title:
-                score += SECTION_WEIGHTS["title"]
-            if in_abstract:
-                score += SECTION_WEIGHTS["abstract"]
-            if in_kw:
-                score += SECTION_WEIGHTS["keywords"]
-            if in_title or in_abstract or in_kw:
-                matched[axis].append(kw)
-
-    # Bonus por cubrir múltiples ejes
-    axes_hit = sum(1 for v in matched.values() if v)
-    score *= (1.0 + 0.15 * (axes_hit - 1))  # 1 eje =1.0, 2 =1.15, 3 =1.30, 4 =1.45
-
-    # Bonus pequeño si el topic-tag local menciona algo del set
-    topic_bonus = any(part in topic for part in ("cyber", "security", "zero", "trust",
-                                                  "ia", "ai", "ml", "ml-", "deep"))
-    if topic_bonus:
-        score *= 1.05
-
-    matched_flat = sorted({kw for v in matched.values() for kw in v})
-    return score, matched_flat, matched
+    El haystack es la concatenación normalizada de title + keywords + abstract.
+    Cada keyword cuenta 1 si aparece al menos una vez (substring match).
+    """
+    haystack = " ".join([
+        normalize_text(title),
+        normalize_text(" ".join(keywords or [])),
+        normalize_text(abstract),
+    ])
+    matched = [kw for kw, kw_n in _KEYWORDS_NORMALIZED if kw_n and kw_n in haystack]
+    return len(matched), matched
 
 
 # ─────────────────────────────────────────────────────────────── #
-# Capa 2 — TF-IDF cosine                                         #
+# Métricas auxiliares (informativas, no deciden tier)            #
 # ─────────────────────────────────────────────────────────────── #
 def tfidf_scores(corpus: list[str], query: str) -> np.ndarray:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -160,27 +137,20 @@ def tfidf_scores(corpus: list[str], query: str) -> np.ndarray:
     )
     X = vec.fit_transform(corpus)
     q = vec.transform([query])
-    sims = cosine_similarity(q, X).ravel()
-    return sims
+    return cosine_similarity(q, X).ravel()
 
 
-# ─────────────────────────────────────────────────────────────── #
-# Capa 3 — Sentence-BERT cosine (con cache + ONNX int8)          #
-# ─────────────────────────────────────────────────────────────── #
-SBERT_BATCH_SIZE = 128                  # (B) era 32
+SBERT_BATCH_SIZE = 128
 
-# Variantes ONNX cuantizadas (en orden de preferencia por hardware típico)
 ONNX_VARIANTS = [
-    "onnx/model_qint8_avx512_vnni.onnx",   # Intel/AMD Zen3+ con VNNI (mejor)
-    "onnx/model_qint8_avx512.onnx",        # Intel/AMD con AVX-512
-    "onnx/model_quint8_avx2.onnx",         # x86 con AVX2 (default seguro)
-    "onnx/model_qint8_arm64.onnx",         # Apple Silicon / ARM
+    "onnx/model_qint8_avx512_vnni.onnx",
+    "onnx/model_qint8_avx512.onnx",
+    "onnx/model_quint8_avx2.onnx",
+    "onnx/model_qint8_arm64.onnx",
 ]
 
 
 def _load_sbert_model():
-    """Carga SBERT con backend ONNX int8 si está disponible; fallback a PyTorch."""
-    # Tunear PyTorch threads (importa incluso con backend ONNX para preprocessing)
     try:
         import os as _os
         import torch
@@ -192,7 +162,6 @@ def _load_sbert_model():
 
     from sentence_transformers import SentenceTransformer
 
-    # Intentar cada variante ONNX en orden hasta encontrar una que funcione
     for variant in ONNX_VARIANTS:
         try:
             model = SentenceTransformer(
@@ -205,7 +174,6 @@ def _load_sbert_model():
         except Exception:
             continue
 
-    # Default ONNX (no cuantizado)
     try:
         model = SentenceTransformer(SBERT_MODEL, backend="onnx")
         console.print("[dim]SBERT backend: ONNX (no cuantizado)[/dim]")
@@ -220,7 +188,6 @@ def sbert_scores(corpus: list[str], query: str, codes: list[str],
     cache_local = OUTPUTS / "embeddings.npy"
     cache_codes_local = OUTPUTS / "embeddings_codes.npy"
 
-    # Cache hit
     if use_cache and cache_local.exists() and cache_codes_local.exists():
         cached_codes = np.load(cache_codes_local, allow_pickle=True).tolist()
         if cached_codes == codes:
@@ -243,54 +210,35 @@ def sbert_scores(corpus: list[str], query: str, codes: list[str],
         np.save(cache_local, corpus_emb)
         np.save(cache_codes_local, np.array(codes, dtype=object))
 
-    # Query embedding (mismo modelo si ya cargado)
     if model is None:
         model = _load_sbert_model()
     query_emb = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
-    sims = (corpus_emb @ query_emb.T).ravel()
-    return sims
+    return (corpus_emb @ query_emb.T).ravel()
 
 
 # ─────────────────────────────────────────────────────────────── #
-# Combinar + mapear a 1-5                                        #
+# Decisión de tier                                               #
 # ─────────────────────────────────────────────────────────────── #
-def minmax(x: np.ndarray) -> np.ndarray:
-    a, b = x.min(), x.max()
-    return (x - a) / (b - a) if b > a else np.zeros_like(x)
-
-
-def percentile_buckets(raw: np.ndarray) -> np.ndarray:
-    """Mapea valores a buckets 1-5 según SCORE_BUCKETS."""
-    out = np.ones_like(raw, dtype=int)
-    for thresh_p, bucket in SCORE_BUCKETS:
-        cutoff = np.quantile(raw, thresh_p)
-        out = np.where((raw >= cutoff) & (out < bucket), bucket, out)
-    return out
-
-
-def decision_for(score: int, year: int | None) -> str:
+def decision_for(matches: int, year: int | None) -> str:
     in_range = (year is not None) and (YEAR_MIN <= year <= YEAR_MAX)
-    if score >= 4 and in_range:
-        return "Gold — muy relacionado" if score == 5 else "Gold — claramente relacionado"
-    if score >= 4 and not in_range:
-        return "Fuera del rango temporal"
-    if score == 3:
-        return "Revisar (parcial)"
-    if score == 2:
-        return "No prioritario"
-    return "Excluido"
+    if matches >= GOLD_KEYWORD_THRESHOLD and in_range:
+        return "Gold"
+    if matches >= GOLD_KEYWORD_THRESHOLD:
+        return "Gold fuera de rango temporal"
+    return "Silver"
 
 
 # ─────────────────────────────────────────────────────────────── #
 # Driver                                                         #
 # ─────────────────────────────────────────────────────────────── #
 def run(skip_sbert: bool = False, use_cache: bool = True) -> int:
-    console.rule("[bold]Fase 3 — Scoring híbrido[/bold]")
+    console.rule("[bold]Fase 3 — Scoring (conteo de keywords)[/bold]")
     df = load_inputs()
     n = df.height
-    console.print(f"Papers a scorear: [bold]{n}[/bold]")
+    console.print(f"Papers a scorear: [bold]{n}[/bold]  ·  "
+                  f"keywords: [bold]{len(KEYWORDS_FLAT)}[/bold]  ·  "
+                  f"Gold threshold: ≥ [bold]{GOLD_KEYWORD_THRESHOLD}[/bold]")
 
-    # Texto del corpus para TF-IDF y SBERT
     df = df.with_columns(
         pl.concat_str([
             pl.col("title").fill_null(""),
@@ -301,29 +249,29 @@ def run(skip_sbert: bool = False, use_cache: bool = True) -> int:
     corpus_text = df["text_for_score"].to_list()
     codes = df["code"].to_list()
 
-    # ── Capa 1 ── #
+    # ── Score = # keywords distintas ── #
     started = time.perf_counter()
-    kw_scores, matched_lists, matched_dicts = [], [], []
+    match_counts, matched_lists = [], []
     with Progress(SpinnerColumn(), TextColumn("[bold]Keyword score[/bold]"),
-                   BarColumn(), MofNCompleteColumn(), TimeElapsedColumn(),
-                   console=console) as progress:
+                  BarColumn(), MofNCompleteColumn(), TimeElapsedColumn(),
+                  console=console) as progress:
         task = progress.add_task("kw", total=n)
         for row in df.iter_rows(named=True):
-            s, matched, mdict = keyword_score_row(
-                row["title"], row["abstract"],
-                row["keywords_extracted"], row["topic_tag_local"],
+            count, matched = keyword_score_row(
+                row["title"], row["abstract"], row["keywords_extracted"],
             )
-            kw_scores.append(s); matched_lists.append(matched); matched_dicts.append(mdict)
+            match_counts.append(count)
+            matched_lists.append(matched)
             progress.advance(task)
-    kw_arr = np.array(kw_scores)
+    score_arr = np.array(match_counts, dtype=int)
     console.print(f"[dim]keyword in {time.perf_counter()-started:.1f}s[/dim]")
 
-    # ── Capa 2 ── #
+    # ── TF-IDF (informativo) ── #
     started = time.perf_counter()
     tfidf_arr = tfidf_scores(corpus_text, query_as_natural_text())
     console.print(f"[dim]tfidf in {time.perf_counter()-started:.1f}s[/dim]")
 
-    # ── Capa 3 ── #
+    # ── SBERT (informativo) ── #
     if skip_sbert:
         sbert_arr = np.zeros(n)
         console.print("[yellow]SBERT saltado por --skip-sbert[/yellow]")
@@ -331,46 +279,30 @@ def run(skip_sbert: bool = False, use_cache: bool = True) -> int:
         started = time.perf_counter()
         sbert_arr = sbert_scores(corpus_text, query_as_natural_text(), codes, use_cache)
         console.print(f"[dim]sbert in {time.perf_counter()-started:.1f}s[/dim]")
-        # Subir cache a MinIO
         s3 = minio()
         cache_local = OUTPUTS / "embeddings.npy"
         if cache_local.exists():
             s3.upload_file(str(cache_local), BUCKET, KEY_SILVER_EMBEDDINGS)
 
-    # Normalización min-max y combinación
-    kw_n = minmax(kw_arr)
-    tfidf_n = minmax(tfidf_arr)
-    sbert_n = minmax(sbert_arr) if not skip_sbert else np.zeros(n)
-
-    if skip_sbert:
-        raw = 0.55 * kw_n + 0.45 * tfidf_n
-    else:
-        raw = W_KEYWORD * kw_n + W_TFIDF * tfidf_n + W_SBERT * sbert_n
-
-    scores = percentile_buckets(raw)
-
-    # Justificación textual
+    # ── Justificación textual (incluye métricas aux para trazabilidad) ── #
     just = []
     for i in range(n):
-        parts = []
+        parts = [f"matches={match_counts[i]}/{len(KEYWORDS_FLAT)}"]
         if matched_lists[i]:
-            parts.append(f"kws: {', '.join(matched_lists[i][:6])}")
+            parts.append(f"kws: {', '.join(matched_lists[i][:8])}")
         parts.append(f"tfidf={tfidf_arr[i]:.3f}")
         if not skip_sbert:
             parts.append(f"sbert={sbert_arr[i]:.3f}")
-        parts.append(f"raw={raw[i]:.3f}")
         just.append(" · ".join(parts))
 
     years = df["year"].to_list()
-    decisions = [decision_for(s, y) for s, y in zip(scores.tolist(), years)]
+    decisions = [decision_for(c, y) for c, y in zip(match_counts, years)]
 
     df = df.with_columns(
-        pl.Series("keyword_raw", kw_arr),
+        pl.Series("score", score_arr),
+        pl.Series("keywords_matched", matched_lists),
         pl.Series("tfidf_cosine", tfidf_arr),
         pl.Series("sbert_cosine", sbert_arr),
-        pl.Series("score_raw", raw),
-        pl.Series("score", scores),
-        pl.Series("keywords_matched", matched_lists),
         pl.Series("justificacion", just),
         pl.Series("decision", decisions),
         pl.col("year").map_elements(
@@ -379,24 +311,31 @@ def run(skip_sbert: bool = False, use_cache: bool = True) -> int:
         ).alias("en_rango_temporal"),
     )
 
-    # Persistir silver final
     out_local = OUTPUTS / "silver.parquet"
     df.write_parquet(out_local)
     s3 = minio()
     s3.upload_file(str(out_local), BUCKET, KEY_SILVER_FINAL)
     console.print(f"\n[green]✓ silver[/green] → s3://{BUCKET}/{KEY_SILVER_FINAL}")
 
-    # Distribución score / decisión
+    # Histograma de scores (0, 1, 2, …, GOLD_KEYWORD_THRESHOLD, +)
     table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Score"); table.add_column("Conteo", justify="right")
-    for s in [5, 4, 3, 2, 1]:
-        c = (df["score"] == s).sum()
+    table.add_column("Score (keywords matched)")
+    table.add_column("Conteo", justify="right")
+    score_series = df["score"]
+    for s in range(0, GOLD_KEYWORD_THRESHOLD):
+        c = (score_series == s).sum()
         table.add_row(str(s), str(c))
+    ge_threshold = (score_series >= GOLD_KEYWORD_THRESHOLD).sum()
+    table.add_row(f"≥ {GOLD_KEYWORD_THRESHOLD} (Gold)", str(ge_threshold))
     console.print(table)
 
     table2 = Table(show_header=True, header_style="bold cyan")
-    table2.add_column("Decisión"); table2.add_column("Conteo", justify="right")
-    for dec, c in df.group_by("decision").agg(pl.len().alias("c")).sort("c", descending=True).iter_rows():
+    table2.add_column("Decisión")
+    table2.add_column("Conteo", justify="right")
+    for dec, c in (df.group_by("decision")
+                     .agg(pl.len().alias("c"))
+                     .sort("c", descending=True)
+                     .iter_rows()):
         table2.add_row(dec, str(c))
     console.print(table2)
 
@@ -405,7 +344,8 @@ def run(skip_sbert: bool = False, use_cache: bool = True) -> int:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--skip-sbert", action="store_true", help="debug: salta SBERT")
+    ap.add_argument("--skip-sbert", action="store_true",
+                    help="debug: salta SBERT (la métrica queda en 0)")
     ap.add_argument("--no-cache", action="store_true")
     args = ap.parse_args()
     raise SystemExit(run(skip_sbert=args.skip_sbert, use_cache=not args.no_cache))

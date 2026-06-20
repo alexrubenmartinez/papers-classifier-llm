@@ -3,18 +3,19 @@ SHELL := /bin/bash
 
 ROOT := $(shell cd .. && pwd)
 PY := $(ROOT)/.venv/bin/python
+ENV_FILE := $(ROOT)/.env
 
 # Acceso SSH al VPS (idénticos flags al tunnel.sh)
-SSH := SSHPASS='$(shell grep ^VPS_PASS $(ROOT)/.env | cut -d= -f2)' sshpass -e ssh \
+SSH := SSHPASS='$(shell grep ^VPS_PASS "$(ENV_FILE)" | cut -d= -f2)' sshpass -e ssh \
        -o StrictHostKeyChecking=no -o PreferredAuthentications=password \
        -o PubkeyAuthentication=no
-SCP := SSHPASS='$(shell grep ^VPS_PASS $(ROOT)/.env | cut -d= -f2)' sshpass -e scp \
+SCP := SSHPASS='$(shell grep ^VPS_PASS "$(ENV_FILE)" | cut -d= -f2)' sshpass -e scp \
        -o StrictHostKeyChecking=no -o PreferredAuthentications=password \
        -o PubkeyAuthentication=no
 RSYNC_FLAGS := -avz --exclude '__pycache__' --exclude '.venv' --exclude 'outputs/embeddings.npy' \
                --exclude '.cache' --exclude '*.parquet' --exclude '*.xlsx'
-VPS_USER := $(shell grep ^VPS_USER $(ROOT)/.env | cut -d= -f2)
-VPS_HOST := $(shell grep ^VPS_HOST $(ROOT)/.env | cut -d= -f2)
+VPS_USER := $(shell grep ^VPS_USER "$(ENV_FILE)" | cut -d= -f2)
+VPS_HOST := $(shell grep ^VPS_HOST "$(ENV_FILE)" | cut -d= -f2)
 REMOTE := /root/proyecto_papers/grupo3_ciberseguridad
 
 .PHONY: help upload extract score silver gold ranking report run pipeline \
@@ -25,33 +26,33 @@ help: ## Lista targets
 
 # ───── Fases del pipeline (LOCAL) ─────
 upload: ## Fase 1: sube los 2000 PDFs a MinIO Bronze
-	$(PY) -m classifier.src.upload_bronze --workers 24
+	"$(PY)" -m classifier.src.upload_bronze --workers 24
 
 extract: ## Fase 2: extrae metadata con PyMuPDF
-	$(PY) -m classifier.src.extract_metadata --workers 8
+	"$(PY)" -m classifier.src.extract_metadata --workers 8
 
-score: ## Fase 3: scoring híbrido (kw + tfidf + sbert)
-	$(PY) -m classifier.src.score
+score: ## Fase 3: score = # keywords distintas matched
+	"$(PY)" -m classifier.src.score
 
-silver: ## Fase 4a: silver.xlsx
-	$(PY) -m classifier.src.build_silver
+silver: ## Fase 4a: silver.csv + xlsx + copia PDFs a silver/papers/
+	"$(PY)" -m classifier.src.build_silver
 
-gold: ## Fase 4b: gold.parquet + gold.xlsx
-	$(PY) -m classifier.src.build_gold
+gold: ## Fase 4b: gold.csv + xlsx + copia PDFs a gold/papers/
+	"$(PY)" -m classifier.src.build_gold
 
-ranking: ## Fase 5: ranking.xlsx
-	$(PY) -m classifier.src.ranking
+ranking: ## Fase 5: ranking.csv (+ xlsx)
+	"$(PY)" -m classifier.src.ranking
 
 report: ## Fase 6: report.md
-	$(PY) -m classifier.src.reporter
+	"$(PY)" -m classifier.src.reporter
 
 run: ## Pipeline completo end-to-end
-	$(PY) -m classifier.src.pipeline run
+	"$(PY)" -m classifier.src.pipeline run
 
 # ───── Deploy y run en VPS ─────
 deploy: ## rsync del clasificador al VPS bajo /root/proyecto_papers/grupo3_ciberseguridad
 	@$(SSH) $(VPS_USER)@$(VPS_HOST) "mkdir -p $(REMOTE)"
-	@SSHPASS='$(shell grep ^VPS_PASS $(ROOT)/.env | cut -d= -f2)' sshpass -e rsync $(RSYNC_FLAGS) \
+	@SSHPASS='$(shell grep ^VPS_PASS "$(ENV_FILE)" | cut -d= -f2)' sshpass -e rsync $(RSYNC_FLAGS) \
 		-e 'ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no' \
 		Dockerfile docker-compose.classifier.yml requirements.txt \
 		search_query.py score_rubric.md Makefile \

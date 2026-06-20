@@ -1,109 +1,93 @@
-# Score Rubric — Grupo 3 / Ciberseguridad
+# Score Rubric — Grupo 3 / Security Data Lakehouse
 
 Documenta la metodología del clasificador. Es la base del **ítem 1 (Algoritmo)** y **ítem 8 (Informe)** de la rúbrica.
 
 ## 1. Pipeline
 
 ```
-PDFs (Bronze) → metadata (Silver-raw) → score 1-5 (Silver final) → Gold (4-5 + año en rango) → Ranking
+PDFs (Bronze, inmutable)
+   │
+   ├── extract metadata (Silver-raw)            → metadata.parquet
+   │
+   ├── score = # keywords distintas matched     → silver.parquet (corpus completo)
+   │           en title ∪ keywords ∪ abstract     + copia 1-a-1 de PDFs a silver/papers/
+   │                                              + silver.csv (primario) + silver.xlsx (opcional)
+   │
+   ├── Gold (score ≥ 5 + año en rango)          → gold.parquet
+   │                                              + copia de PDFs a gold/papers/
+   │                                              + gold.csv (primario) + gold.xlsx (opcional)
+   │
+   └── ranking + report                         → ranking.csv + report.md
 ```
 
-## 2. Cadena de búsqueda
+Bronze contiene los PDFs originales sin tocar. Silver y Gold son tiers derivados con copia
+física de los PDFs vía `s3.copy_object` (server-side, no descarga al cliente).
 
-Refinada desde el ejemplo del enunciado, con sinónimos técnicos para mejorar el recall semántico (ver `search_query.py`):
-
-```
-(zero trust OR zero-trust architecture OR ZTNA OR BeyondCorp OR NIST 800-207 OR SDP OR SASE OR microsegmentation OR …)
-AND
-(cybersecurity OR information security OR cloud security OR hybrid cloud security OR ciberseguridad OR …)
-AND
-(threat detection OR intrusion detection OR anomaly detection OR attack detection OR detección de amenazas OR …)
-AND
-(artificial intelligence OR machine learning OR deep learning OR neural network OR LLM OR transformer OR …)
-```
-
-Ejes temáticos (`KEYWORDS_BY_AXIS` en `search_query.py`):
-
-| Eje | Ejemplos |
-|---|---|
-| `zero_trust` | zero trust, ZTNA, BeyondCorp, NIST 800-207, microsegmentation, SDP, SASE |
-| `cybersecurity` | cybersecurity, cloud security, hybrid cloud security, ciberseguridad |
-| `detection` | threat detection, intrusion detection, anomaly detection, malware detection |
-| `ai` | artificial intelligence, machine learning, deep learning, LLM, transformer |
-
-## 3. Score híbrido en 3 capas
+## 2. Cadena de búsqueda (Scopus)
 
 ```
-score_raw = 0.40 · keyword_score  +  0.30 · tfidf_cosine  +  0.30 · sbert_cosine
-                ───────── todos normalizados a [0,1] vía min-max ─────────
+TITLE-ABS-KEY (
+  ("data lakehouse" OR "Apache Iceberg" OR "open table format" OR "object storage") AND
+  ("cybersecurity" OR "threat detection" OR "security logs" OR "SIEM" OR "telemetry data") AND
+  ("machine learning" OR "artificial intelligence" OR "offline training" OR "feature store" OR "predictive models") AND
+  ("big data" OR "data pipeline" OR "scalability" OR "query performance" OR "data retention" OR
+   "schema evolution" OR "historical data" OR "time-travel query")
+)
 ```
 
-### 3.1 Keyword score (capa léxica)
+Internamente la lista se aplana a **22 keywords** sin agrupación por ejes; cada keyword
+cuenta 1 si aparece al menos una vez en el texto combinado del paper.
 
-Cuenta apariciones de cada keyword del set en distintas secciones del paper, con pesos:
+## 3. Score (regla única de tier)
 
-| Sección | Peso |
-|---|---:|
-| Título | 3.0 |
-| Abstract | 2.0 |
-| Keywords (sección "Keywords:") | 1.5 |
-| Cuerpo (3 primeras páginas) | 0.5 |
+```
+score = | { kw ∈ KEYWORDS_FLAT : kw aparece en normalize(title ⊔ keywords ⊔ abstract) } |
+```
 
-Aplica además dos bonus:
+- Frases multi-palabra (`"data lakehouse"`, `"time-travel query"`) cuentan como 1.
+- Comparación case-insensitive, con normalización de separadores (`-`, `_`, `/`, espacios múltiples).
+- Substring match (no requiere bordes de palabra), para tolerar variantes de tokenización del extractor.
 
-- **Cobertura multi-eje**: si el paper toca 1, 2, 3 o 4 ejes → multiplicador 1.00, 1.15, 1.30, 1.45.
-- **Topic-tag local**: bonus 1.05 si el `topic-tag` del nombre del archivo contiene `cyber`, `security`, `zero`, `ai`, etc.
+Rango posible del score: `0 .. 22` (`len(KEYWORDS_FLAT)`).
 
-### 3.2 TF-IDF cosine (capa léxica estadística)
-
-- `sklearn.feature_extraction.text.TfidfVectorizer` con n-gram (1, 2), `max_df=0.95`, `min_df=2`, max 50k features.
-- Fit sobre `title + ". " + abstract` de **todo el corpus**.
-- Transform de la query (versión natural-language, sin operadores booleanos) y cálculo de cosine similarity contra cada paper.
-
-### 3.3 Sentence-BERT cosine (capa semántica)
-
-- Modelo: `sentence-transformers/all-MiniLM-L6-v2` (80 MB, balance calidad/velocidad).
-- Embedding del corpus en batches; embedding de la query; cosine sim.
-- **Esta capa es la que captura conceptos sinónimos** que ninguna keyword literal alcanza: NIST 800-207, microsegmentation network slicing, identity-aware proxy, etc.
-- Los embeddings del corpus se cachean en `s3://examen-parcial/grupo3_ciberseguridad/silver/embeddings.npy` para recalibrar pesos sin recomputar.
-
-## 4. Mapeo raw → 1-5 (percentiles)
-
-| Percentil del raw | Score |
-|---:|---:|
-| ≥ 90% | 5 |
-| 70-90% | 4 |
-| 40-70% | 3 |
-| 15-40% | 2 |
-| < 15% | 1 |
-
-Los percentiles se calculan sobre el corpus completo. Si la distribución por año cambia significativamente o el resultado se ve muy concentrado, los cortes se ajustan en `config.py::SCORE_BUCKETS`.
-
-## 5. Filtro temporal + decisión
+## 4. Decisión
 
 | Score | Año | Decisión |
 |:---:|:---:|---|
-| 5 | 2016-2026 | Gold — muy relacionado |
-| 4 | 2016-2026 | Gold — claramente relacionado |
-| 5 ó 4 | < 2016 | Fuera del rango temporal |
-| 3 | cualquiera | Revisar (parcial) |
-| 2 | cualquiera | No prioritario |
-| 1 | cualquiera | Excluido |
+| ≥ 5 | 2016-2026 | **Gold** |
+| ≥ 5 | fuera de rango | Gold fuera de rango temporal |
+| < 5 | cualquiera | Silver |
+
+El umbral `5` se define en `config.py::GOLD_KEYWORD_THRESHOLD` y es la única decisión de tier.
+
+## 5. Métricas auxiliares (informativas, NO deciden tier)
+
+El pipeline también calcula y persiste en `silver.csv` dos columnas auxiliares para
+análisis posterior y trazabilidad:
+
+- `tfidf_cosine`: cosine similarity entre la query natural-language y el corpus
+  (`TfidfVectorizer` con n-gram (1,2), `max_df=0.95`, `min_df=2`, 50k features).
+- `sbert_cosine`: `sentence-transformers/all-MiniLM-L6-v2` (ONNX int8) embeddings
+  del corpus vs la query.
+
+Los embeddings se cachean en `s3://examen-parcial/grupo3_ciberseguridad/silver/embeddings.npy`
+para no recomputar si cambia solo el umbral.
 
 ## 6. Justificación textual
 
-Cada paper trae en Silver una columna `justificacion` con:
+Cada paper trae en `silver.csv` la columna `justificacion` con:
 
-- Keywords matcheadas (top 6).
-- `tfidf=<valor>`
-- `sbert=<valor>`
-- `raw=<valor>` (post combinación)
+```
+matches=N/22 · kws: kw1, kw2, … · tfidf=0.42 · sbert=0.51
+```
 
-Esto hace el resultado **auditable** (ítem 4 de la rúbrica).
+Esto hace el resultado **auditable** (ítem 4 de la rúbrica): cualquier evaluador puede
+abrir el PDF en `silver/papers/` y verificar a mano qué keywords aparecen.
 
 ## 7. Detección de año (multi-señal)
 
-Tres fuentes votan; mayoría simple. Confianza alta si arxiv-id coincide con extraído, media si dos fuentes coinciden, baja si solo una.
+Tres fuentes votan; mayoría simple. Confianza alta si arxiv-id coincide con extraído,
+media si dos fuentes coinciden, baja si solo una.
 
 1. **Primaria**: arxiv-id en el nombre del archivo (formato `YYMM.NNNNN`).
 2. **Secundaria**: regex `\b(19|20)\d{2}\b` sobre la primera página del PDF.
@@ -111,12 +95,16 @@ Tres fuentes votan; mayoría simple. Confianza alta si arxiv-id coincide con ext
 
 ## 8. Extracción de título / abstract / keywords (PyMuPDF)
 
-- **Título**: heurística font-size — el bloque de texto con mayor tamaño en el primer 50% vertical de la página 1.
-- **Abstract**: regex multi-idioma `(?is)\babstract\b\s*[:\-.]?\s*(.{120,4000}?)(?=\n\s*(?:keywords?|1\.|introduction|resumen)...)` con fallback en español a `\bresumen\b`.
-- **Keywords**: regex sobre la sección "Keywords:" / "Palabras clave:" + fallback a YAKE (top-8 sobre el abstract) si la sección no existe.
+- **Título**: heurística font-size — el bloque de texto con mayor tamaño en el primer
+  50% vertical de la página 1.
+- **Abstract**: regex multi-idioma con fallback en español a `\bresumen\b`.
+- **Keywords**: regex sobre la sección "Keywords:" / "Palabras clave:" + fallback a
+  YAKE (top-8 sobre el abstract) si la sección no existe.
 
 ## 9. Reproducibilidad
 
 - Random seeds fijos (`DetectorFactory.seed=0` para langdetect).
 - Cache de embeddings SBERT por código de paper.
 - Manifest de Bronze persiste sha256 + etag de cada PDF para auditoría.
+- El score depende solo de la lista de keywords + extracción → re-calcular score es
+  determinístico al 100%.

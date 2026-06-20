@@ -1,21 +1,16 @@
 # papers-classifier — pipeline Bronze / Silver / Gold
 
-Clasificador de artículos científicos para selección automática de papers relevantes a una tesis. Implementa una arquitectura **data lakehouse en MinIO** con scoring híbrido **keyword + TF-IDF + Sentence-BERT (ONNX int8)**. Diseñado para correr **dentro de un container Docker en el VPS**, conectado a la red del stack del curso.
+Clasificador de artículos científicos para selección automática de papers relevantes a una tesis. Implementa una arquitectura **data lakehouse en MinIO** con scoring por **conteo de keywords distintas** sobre title ∪ keywords ∪ abstract. Diseñado para correr **dentro de un container Docker en el VPS**, conectado a la red del stack del curso.
 
-Caso de uso de referencia: clasificación de 2000 PDFs para la tesis del Grupo 3 — *"Diseño e implementación de una arquitectura Zero Trust potenciada con IA para detección temprana de amenazas en entornos cloud híbridos"* (Bases de Datos Avanzadas y Big Data, UNMSM 2026-I).
+Caso de uso de referencia: clasificación de PDFs para la tesis del Grupo 3 — *"Implementación de un Security Data Lakehouse basado en Apache Iceberg para el entrenamiento offline de modelos de IA aplicados a la detección de amenazas"* (Bases de Datos Avanzadas y Big Data, UNMSM 2026-I).
 
-## Resultado en producción
+## Cómo decide cada tier
 
-| Métrica | Valor |
-|---|---|
-| Corpus | 2000 PDFs (3.5 GB) |
-| Pipeline cold-cache en VPS | **127 s** (2 m 07 s) |
-| Pipeline con cache de embeddings | **62 s** (1 m 02 s) |
-| Throughput extract | 56-60 papers/s (8 cores) |
-| Papers Gold | 588 (199 score 5 + 389 score 4) |
-| Top-10 on-topic Zero Trust + AI + Cloud | 10/10 |
+- **Bronze**: PDFs originales, inmutables, subidos una sola vez.
+- **Silver**: TODOS los papers procesados — metadata extraída + `score = # keywords distintas matched` + **copia 1-a-1 del PDF** a `silver/papers/`.
+- **Gold**: subconjunto con `score ≥ 5` y año en rango [2016, 2026]; los PDFs se **copian** a `gold/papers/`.
 
-Sin pérdida de calidad respecto a la versión PyTorch float32 — los embeddings cuantizados int8 dan diferencias <1% en cosine similarity.
+Las métricas auxiliares `tfidf_cosine` y `sbert_cosine` se siguen calculando y persisten como columnas informativas en el CSV, pero **no intervienen** en la decisión de tier.
 
 ## Arquitectura
 
@@ -24,20 +19,25 @@ local Mac / laptop                        VPS (red docker stack_web)
 ─────────────────                         ───────────────────────────
 classifier/src/upload_bronze   ──── SSH ─→  MinIO (examen-parcial)
                                                 │
-                                                ├── grupo3_ciberseguridad/bronze/papers/*.pdf
+                                                ├── grupo3_ciberseguridad/bronze/papers/*.pdf   ← inmutable
                                                 ├── grupo3_ciberseguridad/bronze/index.parquet
                                                 │
 container classifier-g3 (corre dentro VPS)      │
   ├── extract_metadata    (PyMuPDF + ProcessPool 8w + early-exit)
-  ├── score               (kw matching + TF-IDF + SBERT ONNX int8)
-  ├── build_silver / gold (parquet + xlsx)
-  ├── ranking             (xlsx ordenado)
+  ├── score               (# keywords matched + TF-IDF + SBERT informativos)
+  ├── build_silver        (CSV + XLSX + copy_object → silver/papers/)
+  ├── build_gold          (filtra score ≥ 5 + copy_object → gold/papers/)
+  ├── ranking             (csv + xlsx ordenado por score)
   └── reporter            (markdown)
                                                 │
+                                                ├── grupo3_ciberseguridad/silver/papers/*.pdf   ← copia 1-a-1
+                                                ├── grupo3_ciberseguridad/silver/silver.csv     ← primario
+                                                ├── grupo3_ciberseguridad/silver/silver.xlsx    ← opcional
                                                 ├── grupo3_ciberseguridad/silver/{metadata,silver}.parquet
-                                                ├── grupo3_ciberseguridad/silver/silver.xlsx
                                                 ├── grupo3_ciberseguridad/silver/embeddings.npy
-                                                ├── grupo3_ciberseguridad/gold/{gold,ranking}.xlsx
+                                                ├── grupo3_ciberseguridad/gold/papers/*.pdf     ← solo score ≥ 5
+                                                ├── grupo3_ciberseguridad/gold/{gold,ranking}.csv
+                                                ├── grupo3_ciberseguridad/gold/{gold,ranking}.xlsx (opcional)
                                                 └── grupo3_ciberseguridad/reports/report.md
 ```
 
@@ -54,15 +54,16 @@ classifier/
 ├── README-OPERADOR.md                  # guía paso a paso con puntos de captura
 ├── __init__.py                         # package classifier
 ├── src/
-│   ├── config.py                       # bucket, prefijos, pesos, percentiles
+│   ├── config.py                       # bucket, prefijos, GOLD_KEYWORD_THRESHOLD
 │   ├── pipeline.py                     # CLI: `python -m classifier.src.pipeline run`
 │   ├── upload_bronze.py                # Fase 1: PDFs locales → MinIO (paralelo)
 │   ├── extract_metadata.py             # Fase 2: PyMuPDF ProcessPool + early-exit
-│   ├── score.py                        # Fase 3: kw + TF-IDF + SBERT ONNX
-│   ├── build_silver.py                 # Fase 4a: silver.xlsx
-│   ├── build_gold.py                   # Fase 4b: gold.parquet + gold.xlsx
-│   ├── ranking.py                      # Fase 5: ranking.xlsx
+│   ├── score.py                        # Fase 3: score = # keywords distintas matched
+│   ├── build_silver.py                 # Fase 4a: silver.csv + xlsx + copy → silver/papers/
+│   ├── build_gold.py                   # Fase 4b: gold.csv + xlsx + copy → gold/papers/
+│   ├── ranking.py                      # Fase 5: ranking.csv (+xlsx)
 │   ├── reporter.py                     # Fase 6: report.md
+│   ├── _papers_copy.py                 # helper: s3.copy_object server-side paralelo
 │   └── _minio_client.py                # cliente boto3 standalone (sin lib/ externa)
 └── notebooks/
     └── 10_classifier_walkthrough.ipynb # narra el pipeline para capturas
@@ -92,29 +93,32 @@ ssh root@vps "docker exec classifier-g3 python -m classifier.src.pipeline run"
 
 El `Makefile` del directorio `classifier/` envuelve estos comandos: `make deploy`, `make build-vps`, `make up-vps`, `make run-vps`, `make logs-vps`.
 
-## Optimizaciones aplicadas (vs baseline)
+## Optimizaciones aplicadas
 
-| Capa | Antes | Después | Speedup | Cómo |
-|---|---:|---:|---:|---|
-| Extract metadata | 231 s | 33 s | **6.9×** | ProcessPoolExecutor 8 workers + early-exit en página 1 |
-| SBERT encode | 150 s | 84 s | 1.8× | sentence-transformers 3.4 con `backend="onnx"` + variante `qint8_avx512_vnni` + `batch_size=128` |
-| TF-IDF | 9 s | 4.5 s | 2× | beneficio colateral |
-| **Pipeline total** | **395 s** | **127 s** | **3.1×** | |
+| Capa | Cómo |
+|---|---|
+| Extract metadata | ProcessPoolExecutor 8 workers + early-exit en página 1 |
+| SBERT encode (auxiliar) | sentence-transformers 3.4 con `backend="onnx"` + variante `qint8_avx512_vnni` + `batch_size=128` |
+| Copia de PDFs entre tiers | `s3.copy_object` server-side (no descarga al cliente) en `ThreadPoolExecutor(16)` |
+| Formato primario | CSV en vez de XLSX (un orden de magnitud más rápido al escribir) |
 
-## Scoring híbrido
+## Scoring
 
 ```
-final_score_raw = 0.40 · keyword_score
-                + 0.30 · tfidf_cosine
-                + 0.30 · sbert_cosine
-                ───────── todos normalizados a [0,1] vía min-max ─────────
+score = | { kw ∈ KEYWORDS_FLAT : kw aparece en normalize(title ⊔ keywords ⊔ abstract) } |
+decision = "Gold"   si score ≥ GOLD_KEYWORD_THRESHOLD (5) y año ∈ [2016, 2026]
+         = "Silver" en caso contrario
 ```
 
-- **Keyword matching pesado**: título×3.0, abstract×2.0, keywords×1.5, bonus por cobertura multi-eje (zero_trust, cybersecurity, detection, ai).
-- **TF-IDF**: ngrams (1,2), `max_df=0.95`, `min_df=2`, 50k features, cosine vs la query natural-language.
-- **Sentence-BERT** `all-MiniLM-L6-v2` cuantizado int8 (ONNX) — captura conceptos semánticos como NIST 800-207, microsegmentation, BeyondCorp sin keyword literal.
+- **22 keywords** organizadas semánticamente en la query Scopus (lakehouse / security /
+  AI-ML / big-data), pero **aplanadas a una sola lista plana** para el scoring — cada
+  keyword cuenta 1 sin importar su grupo.
+- Frases multi-palabra (`"data lakehouse"`, `"time-travel query"`) cuentan como 1.
+- Substring match case-insensitive sobre texto normalizado (`-`, `_`, `/`, espacios múltiples colapsados).
 
-Mapeo raw → 1-5 por percentiles (10/20/30/25/15). Decisión final aplica filtro temporal 2016-2026 sobre score ∈ {4,5}.
+Las columnas `tfidf_cosine` y `sbert_cosine` se calculan y persisten como métricas
+informativas, pero **no entran** en la fórmula del score. Sirven para análisis posterior
+y para validar manualmente cuán "semánticamente cerca" está un paper sin matches literales.
 
 Detalle metodológico completo en [`classifier/score_rubric.md`](classifier/score_rubric.md). Guía de operador con puntos de captura para rúbrica en [`classifier/README-OPERADOR.md`](classifier/README-OPERADOR.md).
 
