@@ -10,16 +10,6 @@ __pycache__/
 venv/
 *.log
 
-# Node / Angular
-node_modules/
-dist/
-.angular/
-
-# Docker artefactos locales
-ollama-models/
-hf_cache/
-models/
-
 # Sistema
 .DS_Store
 Thumbs.db
@@ -31,3 +21,15 @@ Thumbs.db
 *.tar.gz
 *.zip
 tmp/
+
+# Artefactos del pipeline (se regeneran, viven en MinIO)
+Articulos/
+classifier/outputs/*.parquet
+classifier/outputs/*.xlsx
+classifier/outputs/*.npy
+classifier/outputs/*.md
+classifier/.cache/
+classifier/.venv/
+
+# Notebook checkpoints
+.ipynb_checkpoints/

@@ -1,0 +1,33 @@
+# Override que agrega el clasificador del Grupo 3 al stack del VPS.
+# Uso (en /root/proyecto_papers/grupo3_ciberseguridad):
+#   docker compose -f /root/stack/docker-compose.yml -f docker-compose.classifier.yml up -d --build classifier-g3
+#
+# (también funciona standalone, no requiere los otros servicios del stack;
+#  solo necesita la red externa `web` que ya existe).
+
+services:
+  classifier-g3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: classifier-g3:latest
+    container_name: classifier-g3
+    restart: unless-stopped
+    networks:
+      - web
+    environment:
+      # MinIO interno al stack (mismo network, sin tunnel)
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: GroupOneVPS
+      BUCKET: examen-parcial
+      GROUP_PREFIX: grupo3_ciberseguridad
+      PYTHONPATH: /work
+    volumes:
+      - ./outputs:/work/classifier/outputs
+      - ./.cache:/work/.cache
+
+networks:
+  web:
+    external: true
+    name: stack_web
