@@ -142,6 +142,17 @@ RE_SECTION_HEADING = re.compile(
 # Email (a veces PyMuPDF extrae el email del autor con fuente prominente).
 RE_EMAIL = re.compile(r"\b[\w.\-]+@[\w.\-]+\.[A-Za-z]{2,}\b")
 
+# Nombre de venue (conference/symposium/workshop/etc.) con año:
+#   "Global Research and Innovation Conference 2025"
+#   "International Conference on AI 2024"
+#   "Proceedings of NeurIPS 2023"
+# Estos nombres aparecen como cabecera del artículo y no son el título.
+RE_VENUE_WITH_YEAR = re.compile(
+    r"\b(?:Conference|Symposium|Workshop|Summit|Meeting|Congress|Convention|"
+    r"Proceedings)\b[^.]{0,80}\b(?:19|20)\d{2}\b",
+    re.IGNORECASE,
+)
+
 
 def strip_journal_header(text: str) -> str:
     """Si el texto empieza con un nombre de revista y hay un separador, devuelve
@@ -190,6 +201,9 @@ def looks_like_title(text: str | None) -> bool:
         return False
     # Email de autor (PyMuPDF a veces lo extrae con fuente grande).
     if RE_EMAIL.search(s):
+        return False
+    # Nombre de venue + año ("Global Research and Innovation Conference 2025").
+    if RE_VENUE_WITH_YEAR.search(s):
         return False
     # Solo dígitos / símbolos: no es título
     if not any(c.isalpha() for c in s):
