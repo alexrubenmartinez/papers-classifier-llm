@@ -30,7 +30,9 @@ except ModuleNotFoundError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from classifier.src._minio_client import minio  # noqa: E402
-from classifier.src._papers_copy import copy_papers_to_tier  # noqa: E402
+from classifier.src._papers_copy import (  # noqa: E402
+    clean_tier_prefix, copy_papers_to_tier,
+)
 
 console = Console()
 
@@ -95,12 +97,14 @@ def run(no_xlsx: bool = False, no_copy: bool = False) -> int:
         f"(score ≥ {GOLD_KEYWORD_THRESHOLD}, año {YEAR_MIN}-{YEAR_MAX})"
     )
 
-    # Copia de PDFs a gold/papers/ — solo los que pasaron el filtro
+    # Sincronizar gold/papers/: copia los nuevos y BORRA los que ya no califican
+    # (en cada reclasificación, gold/ refleja exacto el set actual — sin ghosts).
     if no_copy:
-        console.print("[yellow]Copia de PDFs saltada por --no-copy[/yellow]")
+        console.print("[yellow]Copia/cleanup de PDFs saltada por --no-copy[/yellow]")
     else:
         codes = gold["code"].to_list()
         copy_papers_to_tier(codes, KEY_GOLD_PAPERS_PREFIX, tier_label="gold")
+        clean_tier_prefix(KEY_GOLD_PAPERS_PREFIX, keep_codes=codes, tier_label="gold")
 
     return 0
 

@@ -82,3 +82,63 @@ def copy_papers_to_tier(codes: list[str], dst_prefix: str,
             console.print(f"  · {msg}")
     console.print(f"[green]✓ {ok}/{len(codes)} PDFs copiados a {tier_label}[/green]")
     return ok, failed
+
+
+def _delete_one(s3, key: str) -> tuple[str, str | None]:
+    try:
+        s3.delete_object(Bucket=BUCKET, Key=key)
+        return key, None
+    except Exception as e:
+        return key, f"{type(e).__name__}: {e}"
+
+
+def clean_tier_prefix(prefix: str, keep_codes: list[str] | None,
+                      tier_label: str = "tier") -> tuple[int, int]:
+    """Borra de `prefix` los PDFs cuyo code no esté en `keep_codes`.
+
+    Si `keep_codes is None`, borra TODOS los objects del prefix (caso silver/
+    cuando dejó de tener PDFs). Útil para mantener cada reclasificación con el
+    set exacto en MinIO — sin ghosts de runs anteriores.
+
+    Devuelve (deleted, failed).
+    """
+    s3 = minio()
+    keep_set: set[str] | None = set(keep_codes) if keep_codes is not None else None
+
+    current_keys: list[str] = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        for obj in page.get("Contents") or []:
+            current_keys.append(obj["Key"])
+
+    if keep_set is None:
+        orphans = current_keys
+    else:
+        orphans = [k for k in current_keys if Path(k).stem not in keep_set]
+
+    if not orphans:
+        console.print(f"[dim]✓ {tier_label}/ ya estaba limpio (0 orphans)[/dim]")
+        return 0, 0
+
+    deleted, failed_msgs = 0, []
+    with Progress(SpinnerColumn(), TextColumn(f"[bold]Clean ← {tier_label}[/bold]"),
+                  BarColumn(), MofNCompleteColumn(), TimeElapsedColumn(),
+                  console=console) as progress:
+        task = progress.add_task("delete", total=len(orphans))
+        with ThreadPoolExecutor(max_workers=COPY_WORKERS) as ex:
+            futures = [ex.submit(_delete_one, s3, k) for k in orphans]
+            for fut in as_completed(futures):
+                key, err = fut.result()
+                if err is None:
+                    deleted += 1
+                else:
+                    failed_msgs.append(f"{key}: {err}")
+                progress.advance(task)
+
+    failed = len(failed_msgs)
+    if failed:
+        console.print(f"[red]✗ {failed} fallidos al borrar[/red] (primeros 5):")
+        for msg in failed_msgs[:5]:
+            console.print(f"  · {msg}")
+    console.print(f"[green]✓ {deleted} orphans removed from {tier_label}/[/green]")
+    return deleted, failed
