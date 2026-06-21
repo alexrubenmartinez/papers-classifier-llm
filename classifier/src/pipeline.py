@@ -40,12 +40,15 @@ FULL_ORDER = ["upload", "extract", "score", "build-silver", "gold", "ranking", "
 # `run` por defecto: el upload se asume hecho desde local. En el container del VPS
 # no hay acceso a la carpeta Articulos/, así que arrancamos en extract.
 RUN_DEFAULT = ["extract", "score", "build-silver", "gold", "ranking", "report"]
+# `rescore` cuando solo cambiaron las keywords (no los PDFs): salta extract porque
+# silver_metadata.parquet sigue valido. Usado por el API tras cada /reclassify.
+RESCORE_ORDER = ["score", "build-silver", "gold", "ranking", "report"]
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("phase", choices=["run", *PHASES.keys()],
-                    help="Fase a ejecutar (o 'run' para fases 2-6)")
+    ap.add_argument("phase", choices=["run", "rescore", *PHASES.keys()],
+                    help="Fase a ejecutar. `run`=extract..report; `rescore`=score..report (skip extract)")
     ap.add_argument("--full", action="store_true",
                     help="incluir Fase 1 (upload local de PDFs) en `run`")
     ap.add_argument("--limit", type=int, default=None)
@@ -55,8 +58,11 @@ def main():
     ap.add_argument("--no-cache", action="store_true")
     args = ap.parse_args()
 
-    if args.phase == "run":
-        order = FULL_ORDER if args.full else RUN_DEFAULT
+    if args.phase in ("run", "rescore"):
+        if args.phase == "rescore":
+            order = RESCORE_ORDER
+        else:
+            order = FULL_ORDER if args.full else RUN_DEFAULT
         global_started = time.perf_counter()
         for ph in order:
             name, fn = PHASES[ph]
